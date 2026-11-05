@@ -8,6 +8,7 @@ import { renderEdit } from './views/edit.js';
 import { renderMap, teardownMap } from './views/map.js';
 import { renderSettings } from './views/settings.js';
 import { registerUpdates } from './updates.js';
+import { mergeDuplicateRestaurants } from './tidy.js';
 import { renderLane, renderRestaurants, renderRestaurant, goRandom } from './views/lane.js';
 import { renderList, renderDetail, renderProfileEdit, linkChefs } from './views/profiles.js';
 import { renderWishes } from './views/wishes.js';
@@ -76,7 +77,8 @@ function start() {
   app.replaceChildren(view, tabs);
   window.addEventListener('hashchange', route);
   route();
-  store.sync().catch(console.error).finally(() => linkChefs().catch(console.error));
+  const tidy = () => mergeDuplicateRestaurants().then(() => linkChefs()).catch(console.error);
+  store.sync().catch(console.error).finally(tidy);
   window.addEventListener('online', () => store.sync());
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') store.sync();

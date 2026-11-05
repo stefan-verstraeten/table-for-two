@@ -135,6 +135,63 @@ Reply with only a \`\`\`json block: {"wines": [...]}` }],
   return lastJSON(text).wines || [];
 }
 
+// Looks at all photos of an evening (small versions) and says which ones show
+// a menu, a wine list / pairing card, or a wine bottle or label.
+export async function classifyPhotos(blobs) {
+  const content = [];
+  for (const [i, b] of blobs.entries()) content.push({ type: 'text', text: `Photo ${i}:` }, await imageBlock(b));
+  content.push({ type: 'text', text: `These are photos from one restaurant meal. For each photo decide what it mainly shows:
+- "menu": a printed or handwritten menu listing the courses
+- "winelist": a wine list, pairing card or drinks menu listing several wines
+- "bottle": a wine (or other drink) bottle or its label, readable enough to identify
+- "photo": anything else (food, people, the room, views)
+
+Reply with only a \`\`\`json block: {"photos": [{"index": 0, "kind": "photo"}, ...]}` });
+  const r = lastJSON(await ask({ effort: 'low', content }));
+  return r.photos || [];
+}
+
+// Reads the menu, wine list and bottle photos of an evening together →
+// { title, courses: [{dish, detail}], wines: [{name, vintage, producer, grapes, region, country, style, photo}] }
+// where wine.photo is the number of the bottle photo it was read from, if any.
+export async function readMeal(items) {
+  const content = [];
+  for (const [i, it] of items.entries()) content.push({ type: 'text', text: `Photo ${i} (${it.kind}):` }, await imageBlock(it.blob));
+  content.push({ type: 'text', text: `These photos from one restaurant meal show the menu, the wine list or pairing, and/or wine bottles.
+
+1. Transcribe the courses from any menu, in the order served (for a two-column menu: left column top to bottom, then right). Keep the original language and spelling. Leave out headings, dates and guests' names.
+2. List every wine, once each — a bottle that also appears on the wine list is one wine. For each: "name" (cuvée or wine name without the vintage; if there is none, the appellation), "vintage", "producer", "grapes", "region" (appellation as printed), "country" (infer from the region when obvious), "style" (Red, White, Rosé, Sparkling, Sweet, Fortified or Orange — infer when reasonably sure, else empty), "photo" (the number of the bottle photo it was read from, else null). Read labels carefully; leave a field empty rather than guess.
+
+Reply with only a \`\`\`json block: {"title": "menu title if printed, else empty", "courses": [{"dish": "", "detail": ""}], "wines": [...]}` });
+  return lastJSON(await ask({ effort: 'medium', content }));
+}
+
+// A chef bio built from web pages (and/or pasted text) you point it to.
+export async function researchChefFrom(name, urls, pasted, context = '') {
+  const list = urls.map((u) => `- ${u}`).join('\n') || '(no URLs)';
+  const extra = pasted ? `\nText we copied from other pages:\n<copied>\n${pasted.slice(0, 20000)}\n</copied>\n` : '';
+  const text = await ask({
+    system: CHEF_SYSTEM,
+    tools: [{ type: 'web_fetch_20260209', name: 'web_fetch', max_uses: Math.max(3, urls.length + 2) },
+      { type: 'web_search_20260209', name: 'web_search', max_uses: 3 }],
+    content: `Write a profile of the chef ${name}${context ? ` (${context})` : ''}, based first of all on these sources. Fetch each URL.
+${list}
+${extra}
+Only use a web search to fill a gap the sources leave open.
+
+Finish your reply with one JSON object in a \`\`\`json block, with these string fields:
+- "born": date and place of birth
+- "education": culinary school(s) and years
+- "trainedWith": the chefs and restaurants they trained or worked under, in order
+- "restaurants": the restaurants they lead or led, with years
+- "awards": Michelin stars (with years), Gault&Millau scores and titles, other prizes
+- "notable": TV shows, books, signature style or dishes, other noteworthy things
+- "bio": a short narrative bio of 120–200 words in two or three paragraphs separated by a blank line
+- "sources": array of the URLs you relied on`,
+  });
+  return lastJSON(text);
+}
+
 // A quick, cheap call to check a key works.
 export async function checkKey(key) {
   sdk ||= (await import(SDK_URL)).default;

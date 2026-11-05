@@ -5,11 +5,12 @@ import { processFile, summarise } from '../photos.js';
 import * as places from '../places.js';
 import { ensureByName, WINE_STYLES } from './profiles.js';
 import * as claude from '../claude.js';
+import { findExisting } from '../tidy.js';
 
 const VISIT_FIELDS = ['restaurantId', 'date', 'meal', 'occasion', 'stars', 'chef', 'chefId', 'menu', 'wine', 'wineIds',
   'companions', 'memorableDish', 'memories', 'memoriesBy', 'photos', 'coverPhotoId', 'courses'];
 const REST_FIELDS = ['name', 'city', 'country', 'countryCode', 'lat', 'lon', 'currentStars', 'address'];
-const PHOTO_KINDS = { photo: 'Photo', menu: 'Menu', winelist: 'Wine list' };
+const PHOTO_KINDS = { photo: 'Photo', menu: 'Menu', winelist: 'Wine list', bottle: 'Wine' };
 
 // "10.30, -84.81", 10°18'05"N 84°48'30"W, or a Google / Apple Maps link.
 export function parseCoords(text) {
@@ -60,7 +61,8 @@ const textToCourses = (t) => t.split('\n').map((l) => l.trim()).filter(Boolean).
 const same = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 const clone = (o) => JSON.parse(JSON.stringify(o ?? null));
 
-export function renderEdit(root, id, prefill = '') {
+export function renderEdit(root, rawId, prefill = '') {
+  const [id, editQuery] = (rawId || '').split('?');
   const me = store.me();
   const existing = id ? store.visit(id) : null;
   if (id && !existing) { location.hash = '#/'; return; }
@@ -280,7 +282,7 @@ export function renderEdit(root, id, prefill = '') {
       }
       processing--; renderPhotos();
     }
-    if (added.length) { suggestState.dismissed.clear(); renderSuggestions(added); }
+    if (added.length) { suggestState.dismissed.clear(); renderSuggestions(added); if (claude.hasKey()) scanPhotos({ auto: true }); }
   }
 
   function thumbFor(p) {
@@ -300,16 +302,126 @@ export function renderEdit(root, id, prefill = '') {
         p.kind && p.kind !== 'photo' && h('span.badge', { style: p.id === v.coverPhotoId ? { top: '26px' } : {} }, PHOTO_KINDS[p.kind]))),
       Array.from({ length: processing }, () => h('div.ph.processing', 'Reading…')),
       h('button.add-photo', { type: 'button', onclick: () => fileInput.click() }, icon('camera'), 'Add photos'),
+    ), v.photos.length > 0 && h('div.photo-tools',
+      h('button.main-photo', { type: 'button', onclick: chooseCover },
+        h('span.mp-thumb', v.photos.find((x) => x.id === v.coverPhotoId) ? thumbFor(v.photos.find((x) => x.id === v.coverPhotoId)) : ''),
+        h('span', h('b', 'Main photo'), h('small', 'Tap to choose another'))),
+      h('button.btn.small.ghost', { type: 'button', onclick: () => scanPhotos({ auto: false }) }, icon('sparkle'), 'Find menu & wines')),
+    scanBox);
+  }
+
+  function chooseCover() {
+    const s = sheet(h('div',
+      h('h3.serif', { style: { fontSize: '24px', margin: '0 0 12px' } }, 'Choose the main photo'),
+      h('div.photo-grid.pick', v.photos.map((p) => h(`button.ph${p.id === v.coverPhotoId ? '.chosen' : ''}`, { type: 'button', onclick: () => {
+        v.coverPhotoId = p.id; renderPhotos(); s.close(); toast('Main photo chosen — save to keep it');
+      } }, thumbFor(p)))),
     ));
+  }
+
+  // ---------- finding menus and wines among the photos (Claude) ----------
+  const scanBox = h('div');
+  let scanning = false;
+  async function thumbBlobOf(p) {
+    if (newBlobs.has(p.thumb)) return newBlobs.get(p.thumb);
+    return (await fetch(await store.photoURL(p.thumb || p.path))).blob();
+  }
+  async function scanPhotos({ auto }) {
+    if (scanning) return;
+    if (!claude.hasKey()) {
+      sheet(h('div.confirm', h('h3.serif', 'Needs a Claude key'),
+        h('p.muted', 'Recognising menus, wine lists and bottle labels in your photos is done by Claude. Add a key under You → Claude (once per phone). Without a key you can still tap a photo, mark it as the menu or wine list, and paste its text.')));
+      return;
+    }
+    scanning = true;
+    const setRow = (...c) => scanBox.replaceChildren(h('div.suggest', h('div.eyebrow', icon('sparkle'), 'Menu & wines'), ...c));
+    setRow(h('div.scan-row', h('div.spinner.small'), h('span', `Looking through ${v.photos.length} photo${v.photos.length > 1 ? 's' : ''} for the menu and the wines…`)));
+    try {
+      const photos = [...v.photos];
+      const kinds = new Map();
+      for (let i = 0; i < photos.length; i += 20) {
+        const batch = photos.slice(i, i + 20);
+        const res = await claude.classifyPhotos(await Promise.all(batch.map(thumbBlobOf)));
+        for (const r of res) if (batch[r.index] && PHOTO_KINDS[r.kind]) kinds.set(batch[r.index].id, r.kind);
+      }
+      for (const p of photos) if (p.kind && p.kind !== 'photo') kinds.set(p.id, p.kind); // what you marked yourselves wins
+      const found = photos.filter((p) => ['menu', 'winelist', 'bottle'].includes(kinds.get(p.id)));
+      if (!found.length) {
+        setRow(h('p.hint', { style: { margin: 0 } }, 'No menu, wine list or bottle found in these photos.'));
+        if (auto) setTimeout(() => scanBox.replaceChildren(), 6000);
+        return;
+      }
+      setRow(h('div.scan-row', h('div.spinner.small'), h('span', `Reading ${found.length} photo${found.length > 1 ? 's' : ''} (menu, wine list, labels)…`)));
+      const items = await Promise.all(found.slice(0, 12).map(async (p) => ({ p, kind: kinds.get(p.id), blob: await blobOf(p) })));
+      const meal = await claude.readMeal(items);
+      const courses = (meal.courses || []).filter((c) => c.dish);
+      const wines = (meal.wines || []).filter((w) => w.name).map((w) => ({ ...w, photoRef: Number.isInteger(w.photo) ? items[w.photo]?.p : null }));
+      const summary = [courses.length && `${courses.length} course${courses.length > 1 ? 's' : ''}`, wines.length && `${wines.length} wine${wines.length > 1 ? 's' : ''}`].filter(Boolean).join(' and ');
+      const apply = () => reviewMeal({ title: meal.title, courses, wines, kinds });
+      setRow(h('div.suggest-row', icon('menu'),
+        h('div.what', 'Found ', h('b', summary || 'nothing readable'), h('small', `in ${found.length} photo${found.length > 1 ? 's' : ''}`)),
+        (courses.length || wines.length) ? h('div.actions', h('button.btn.small.primary', { type: 'button', onclick: apply }, 'Review')) : ''));
+      if (!auto) apply();
+    } catch (e) {
+      console.error(e);
+      setRow(h('p.hint', { style: { margin: 0 } }, `Couldn’t look through the photos: ${e.message || 'Claude is not reachable right now'}.`));
+    } finally { scanning = false; }
+  }
+
+  function reviewMeal({ title, courses, wines, kinds }) {
+    let useCourses = courses.length > 0 && !(v.courses || []).length;
+    const picked = new Set(wines.map((_, i) => i));
+    const s = sheet(h('div',
+      h('h3.serif', { style: { fontSize: '24px', margin: '0 0 6px' } }, 'From your photos'),
+      courses.length > 0 && h('div',
+        h('label.check', h('input', { type: 'checkbox', checked: useCourses, onchange: (e) => { useCourses = e.target.checked; } }),
+          `The menu: ${courses.length} courses${(v.courses || []).length ? ' (replaces the ones you have)' : ''}`),
+        h('ol.course-list', courses.map((c) => h('li', h('b', c.dish), c.detail && h('small', c.detail))))),
+      wines.length > 0 && h('div',
+        h('p.hint', 'The wines — each gets its own wine page, linked to this evening:'),
+        h('div.wine-picks', wines.map((w, i) => h('label.wine-pick',
+          h('input', { type: 'checkbox', checked: true, onchange: (e) => { e.target.checked ? picked.add(i) : picked.delete(i); } }),
+          w.photoRef ? h('span.wp-thumb', thumbFor(w.photoRef)) : '',
+          h('span', h('b.serif', [w.name, w.vintage].filter(Boolean).join(' ')),
+            h('small', [w.producer, w.grapes, w.region].filter(Boolean).join(' · '))))))),
+      h('div.row-buttons',
+        h('button.btn.ghost', { onclick: () => s.close() }, 'Cancel'),
+        h('button.btn.primary', { onclick: async (e) => {
+          e.target.disabled = true;
+          for (const p of v.photos) if (kinds.has(p.id) && (!p.kind || p.kind === 'photo')) p.kind = kinds.get(p.id);
+          if (useCourses) {
+            v.courses = courses.map((c) => ({ dish: c.dish.trim(), detail: (c.detail || '').trim() }));
+            coursesInput.value = coursesToText(v.courses);
+            if (title && !v.menu) { v.menu = title; menuInput.value = title; }
+          }
+          let n = 0;
+          for (const i of picked) {
+            const w = wines[i];
+            const wid = await ensureByName('wines', w.name, {
+              vintage: w.vintage ? String(w.vintage) : '', producer: w.producer, grapes: w.grapes, region: w.region,
+              country: w.country, style: WINE_STYLES.includes(w.style) ? w.style : '',
+              photo: w.photoRef && !newBlobs.has(w.photoRef.path) ? w.photoRef.path : '',
+            });
+            if (wid && w.photoRef) w.photoRef.wineId = wid;
+            if (wid && !v.wineIds.includes(wid)) { v.wineIds.push(wid); n++; }
+          }
+          // A main photo that turned out to be the menu or a label: prefer a real photo.
+          const cover = v.photos.find((x) => x.id === v.coverPhotoId);
+          if (cover && cover.kind && cover.kind !== 'photo') v.coverPhotoId = v.photos.find((x) => !x.kind || x.kind === 'photo')?.id || v.coverPhotoId;
+          s.close(); renderPhotos(); renderWines();
+          scanBox.replaceChildren();
+          toast(`${[useCourses && 'Menu added', n && `${n} wine page${n > 1 ? 's' : ''} created`].filter(Boolean).join(' · ') || 'Done'} — save the visit to keep it`);
+        } }, 'Add to this evening'))));
   }
 
   function photoActions(p) {
     const s = sheet(h('div.photo-actions',
       h('div', { style: { maxHeight: '40vh', overflow: 'hidden', marginBottom: '8px' } }, thumbFor(p)),
       p.takenAt && h('p.hint', `Taken ${new Date(p.takenAt).toLocaleString('en-GB', { dateStyle: 'long', timeStyle: 'short' })}${p.lat != null ? ' · has location' : ''}`),
-      h('button', { onclick: () => { v.coverPhotoId = p.id; renderPhotos(); s.close(); } }, icon('cover'), 'Use as cover photo'),
+      p.id !== v.coverPhotoId && h('button', { onclick: () => { v.coverPhotoId = p.id; renderPhotos(); s.close(); } }, icon('cover'), 'Make this the main photo'),
       p.kind !== 'menu' && h('button', { onclick: () => { p.kind = 'menu'; renderPhotos(); s.close(); offerRead(p); } }, icon('menu'), 'This is the menu'),
       p.kind !== 'winelist' && h('button', { onclick: () => { p.kind = 'winelist'; renderPhotos(); s.close(); offerRead(p); } }, icon('wine'), 'This is the wine list or pairing'),
+      p.kind !== 'bottle' && claude.hasKey() && h('button', { onclick: () => { p.kind = 'bottle'; renderPhotos(); s.close(); scanPhotos({ auto: false }); } }, icon('wine'), 'This is a wine bottle or label'),
       p.kind && p.kind !== 'photo' && h('button', { onclick: () => { p.kind = 'photo'; renderPhotos(); s.close(); } }, icon('camera'), 'Just a photo of the evening'),
       p.kind === 'menu' && h('button', { onclick: () => { s.close(); readPhoto(p); } }, icon('sparkle'), 'Read the courses from this photo'),
       p.kind === 'winelist' && h('button', { onclick: () => { s.close(); readPhoto(p); } }, icon('sparkle'), 'Read the wines from this photo'),
@@ -587,6 +699,15 @@ export function renderEdit(root, id, prefill = '') {
     if (!r.name) { toast('Give the restaurant a name'); nameInput.focus(); return; }
 
     // Restaurant: new, or changes to an existing one.
+    // Typed the name of a restaurant we already have, without picking it from the suggestions? Use that one.
+    if (!restaurantId) {
+      const known = findExisting(r);
+      if (known) {
+        restaurantId = known.id;
+        for (const f of REST_FIELDS) if ((r[f] == null || r[f] === '') && known[f] != null) r[f] = known[f];
+        r.name = known.name;
+      }
+    }
     const rid = restaurantId || store.newId();
     const base = restaurantId ? (store.restaurant(restaurantId) || {}) : {};
     const rPatch = {};
@@ -596,6 +717,11 @@ export function renderEdit(root, id, prefill = '') {
     // Photos first, so they upload before the journal references them.
     for (const [path, blob] of newBlobs) await store.addPhotoBlob(path, blob);
     for (const pid of removedPhotoIds) await store.forgetPhoto(visitId, pid);
+    // Bottle photos become the picture on their wine's page.
+    for (const p of v.photos) {
+      const w = p.wineId && store.get('wines', p.wineId);
+      if (w && !w.photo) await store.save('wines', w.id, { photo: p.path });
+    }
 
     v.restaurantId = rid;
     v.chef = (chefInput.value || '').trim() || undefined;
@@ -686,6 +812,7 @@ export function renderEdit(root, id, prefill = '') {
       existing && h('button.btn.ghost.block', { type: 'button', style: { marginTop: '10px', color: 'var(--burgundy)' }, onclick: del }, 'Remove this visit')),
   );
 
+  if (editQuery === 'scan') setTimeout(() => scanPhotos({ auto: false }), 300);
   renderWines(); renderLocNote(); renderDate(); renderStars(); renderStarsToday(); renderRatings(); renderPhotos(); renderMeal();
   root.replaceChildren(page);
   window.scrollTo(0, 0);

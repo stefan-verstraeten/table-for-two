@@ -11,7 +11,13 @@ export function renderHome(root) {
   const visits = store.visits();
   const restIds = new Set(visits.map((v) => v.restaurantId));
   const countries = new Set(visits.map((v) => store.restaurant(v.restaurantId)?.country).filter(Boolean));
-  const michelinStars = visits.reduce((s, v) => s + (v.stars?.kind === 'michelin' ? v.stars.count || 0 : 0), 0);
+  // Each restaurant counts once, with the most Michelin stars it had on any of our visits.
+  const bestStars = new Map();
+  for (const v of visits) {
+    if (v.stars?.kind !== 'michelin') continue;
+    bestStars.set(v.restaurantId, Math.max(bestStars.get(v.restaurantId) || 0, v.stars.count || 0));
+  }
+  const michelinStars = [...bestStars.values()].reduce((a, b) => a + b, 0);
 
   const heroVisit = visits.find((v) => coverOf(v));
   const heroPhoto = heroVisit && coverOf(heroVisit);

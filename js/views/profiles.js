@@ -3,7 +3,7 @@
 // either of us, and only "agreed" once both have accepted the content.
 
 import * as store from '../store.js';
-import { h, icon, toast, sheet, confirmSheet, formatDate, stars } from '../ui.js';
+import { h, icon, toast, sheet, confirmSheet, formatDate, stars, photo } from '../ui.js';
 import { PEOPLE } from '../config.js';
 import * as wiki from '../wiki.js';
 import * as claude from '../claude.js';
@@ -114,6 +114,7 @@ export function renderDetail(root, kindKey, id) {
       h('a.text-btn.back-link', { href: `#/${K.coll}` }, '‹ ', K.title),
       h('a.icon-btn', { href: `#/${K.route}-edit/${id}`, 'aria-label': 'Edit', style: { marginRight: '-10px' } }, icon('edit'))),
     x.image && h('div.profile-portrait', h('img', { src: x.image, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' })),
+    !x.image && x.photo && h('div.bottle-photo', photo(x.photo)),
     h('div.visit-head', { style: { padding: '6px 0 0' } },
       h('div.eyebrow', K.textLabel),
       h('h1', x.name),
@@ -180,6 +181,47 @@ export function renderProfileEdit(root, kindKey, rawId) {
       : `Source: ${x.source.title} (Wikipedia ${x.source.lang}). Edit freely.`;
   };
   const anyContent = () => !!x.text || CHEF_KEYS.some((k) => x[k]);
+  const linksIn = h('textarea.textarea.short', {
+    placeholder: 'https://www.gaultmillau.be/…\nhttps://www.restaurant.be/about\n\n…or paste text copied from a page',
+    oninput: (e) => { x.links = e.target.value; },
+  });
+  linksIn.value = x.links || '';
+
+  async function buildFromSources() {
+    const raw = (linksIn.value || '').trim();
+    const term = (nameIn.value || '').trim();
+    if (!term) { toast('Type a name first'); return; }
+    if (!raw) { toast('Paste one or more web addresses first'); linksIn.focus(); return; }
+    const urls = [...raw.matchAll(/https?:\/\/[^\s<>"]+/g)].map((m) => m[0].replace(/[).,;]+$/, ''));
+    const pasted = raw.replace(/https?:\/\/[^\s<>"]+/g, '').trim();
+    if (!claude.hasKey()) {
+      if (pasted && !urls.length) {
+        if (x.text && !(await confirmSheet('Use the pasted text as the bio?', 'It replaces the current text; edit it down afterwards.', 'Use it'))) return;
+        x.text = pasted; text.value = pasted; x.edited = true; x.source = null; renderSource();
+        toast('Pasted into the bio — edit it down');
+        return;
+      }
+      sheet(h('div.confirm', h('h3.serif', 'Needs a Claude key'),
+        h('p.muted', 'Reading web pages and writing the bio from them is done by Claude. Add a key under You → Claude (once per phone). Without a key you can paste the text of a page here instead, and edit it yourselves.')));
+      return;
+    }
+    if (anyContent() && !(await confirmSheet('Rebuild from these sources?', 'What Claude writes replaces what is in the fields now.', 'Build'))) return;
+    const body = h('div.research-wait', h('div.spinner'), h('h3.serif', 'Reading your sources…'),
+      h('p.muted', `Claude is reading ${urls.length ? `${urls.length} page${urls.length > 1 ? 's' : ''}` : 'your text'} about ${term}. Keep the app open.`));
+    const s = sheet(body);
+    try {
+      const ctx = restaurantsOfChef(recId).map((r) => [r.name, r.city, r.country].filter(Boolean).join(', ')).join('; ');
+      const r = await claude.researchChefFrom(term, urls, pasted, ctx && `chef of ${ctx}`);
+      for (const f of K.fields) if (r[f.key]) setField(f.key, r[f.key]);
+      if (r.bio) { x.text = r.bio; text.value = r.bio; }
+      x.source = { kind: 'web', urls: (r.sources?.length ? r.sources : urls).slice(0, 6) };
+      x.edited = false; renderSource(); s.close();
+      toast('Bio built from your sources — check it, then save');
+    } catch (e) {
+      console.error(e);
+      body.replaceChildren(h('h3.serif', 'That didn’t work'), h('p.muted', e.message || 'Claude is not reachable right now.'));
+    }
+  }
 
   // Claude: web research filling the facts and the text.
   async function research() {
@@ -249,7 +291,7 @@ export function renderProfileEdit(root, kindKey, rawId) {
     x.name = (nameIn.value || '').trim();
     if (!x.name) { toast('Give it a name'); return; }
     const patch = {};
-    for (const k of ['name', 'image', 'source', 'edited', ...CONTENT_KEYS(K)]) {
+    for (const k of ['name', 'image', 'source', 'edited', 'links', ...CONTENT_KEYS(K)]) {
       if (JSON.stringify(x[k] || null) !== JSON.stringify(orig[k] || null)) patch[k] = x[k] || undefined;
     }
     const contentChanged = CONTENT_KEYS(K).some((k) => k in patch);
@@ -281,6 +323,12 @@ export function renderProfileEdit(root, kindKey, rawId) {
       h('button.btn.small.ghost', { type: 'button', onclick: lookUp }, 'Find on Wikipedia')),
     styleBox,
     fieldEls,
+    kindKey === 'chefs' && h('div.field.sources-box',
+      h('label', 'Build the bio from these websites'),
+      linksIn,
+      h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', marginTop: '8px' } },
+        h('p.hint', { style: { margin: 0 } }, 'One address per line — the restaurant’s site, Gault&Millau, an interview…'),
+        h('button.btn.small.accent', { type: 'button', onclick: buildFromSources }, icon('sparkle'), 'Build bio'))),
     h('div.field',
       h('label', K.textLabel),
       text, sourceNote,
