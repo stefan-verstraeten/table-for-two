@@ -87,7 +87,9 @@ export function createClient({ repo, token }) {
       const res = await request('GET', `/repos/${repo}/contents/${enc(path)}`, {
         accept: 'application/vnd.github.raw+json',
       });
-      return res.blob();
+      const blob = await res.blob();
+      const type = /\.png$/i.test(path) ? 'image/png' : /\.jpe?g$/i.test(path) ? 'image/jpeg' : blob.type;
+      return type === blob.type ? blob : new Blob([blob], { type });
     },
 
     // Creates or updates a file. `sha` must be given when updating.

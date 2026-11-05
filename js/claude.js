@@ -107,8 +107,15 @@ Finish your reply with one JSON object in a \`\`\`json block, with these string 
   return lastJSON(text);
 }
 
+// The image type comes from the file's own first bytes: photos downloaded from
+// GitHub arrive labelled as a generic file, which Claude rejects.
 async function imageBlock(blob) {
-  return { type: 'image', source: { type: 'base64', media_type: blob.type || 'image/jpeg', data: await blobToBase64(blob) } };
+  const b = new Uint8Array(await blob.slice(0, 12).arrayBuffer());
+  const type = b[0] === 0x89 && b[1] === 0x50 ? 'image/png'
+    : b[0] === 0x47 && b[1] === 0x49 ? 'image/gif'
+    : b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50 ? 'image/webp'
+    : 'image/jpeg';
+  return { type: 'image', source: { type: 'base64', media_type: type, data: await blobToBase64(blob) } };
 }
 
 // Reads a photographed menu → [{ dish, detail }]
