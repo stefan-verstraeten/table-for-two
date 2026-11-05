@@ -8,8 +8,10 @@ export function renderVisit(root, id) {
   if (!v) { root.replaceChildren(h('div.page', h('p.muted', 'This visit could not be found.'), h('a.btn.ghost', { href: '#/' }, 'Back'))); return; }
   const r = store.restaurant(v.restaurantId);
   const cover = coverOf(v);
-  const photos = (v.photos || []).filter((p) => p.kind !== 'menu');
+  const photos = (v.photos || []).filter((p) => !p.kind || p.kind === 'photo');
   const menus = (v.photos || []).filter((p) => p.kind === 'menu');
+  const wineLists = (v.photos || []).filter((p) => p.kind === 'winelist');
+  const wines = (v.wineIds || []).map((wid) => store.get('wines', wid)).filter(Boolean);
 
   const facts = [
     ['Meal', v.meal && v.meal[0].toUpperCase() + v.meal.slice(1)],
@@ -17,10 +19,6 @@ export function renderVisit(root, id) {
       ? h('a.link', { href: `#/chef/${v.chefId}` }, store.get('chefs', v.chefId).name)
       : v.chef || r.chef],
     ['Menu', v.menu],
-    ['Wines', (v.wineIds || []).map((id) => store.get('wines', id)).filter(Boolean).length
-      ? h('span', (v.wineIds || []).map((id) => store.get('wines', id)).filter(Boolean)
-          .map((w, i) => [i ? h('br') : '', h('a.link', { href: `#/wine/${w.id}` }, w.name)]))
-      : null],
     ['Wine notes', v.wine],
     ['With', v.companions],
     ['Remembered dish', v.memorableDish],
@@ -59,12 +57,20 @@ export function renderVisit(root, id) {
 
       facts.length > 0 && h('dl.facts', facts.map(([k, val]) => h('div', h('dt', k), h('dd', val)))),
 
-      photos.length > (cover && cover.kind !== 'menu' ? 1 : 0) && h('div.gallery',
+      photos.length > (photos.includes(cover) ? 1 : 0) && h('div.gallery',
         photos.filter((p) => p !== cover).map((p) => h('button', { onclick: () => lightbox(p) }, photo(p.thumb || p.path)))),
 
-      menus.length > 0 && h('div.menu-souvenir',
+      (menus.length > 0 || v.courses?.length > 0) && h('div.menu-souvenir',
         h('h3.section-title', 'The menu'),
-        menus.map((p) => h('button', { onclick: () => lightbox(p), style: { display: 'block', width: '100%', marginBottom: '14px' } }, photo(p.path)))),
+        v.courses?.length > 0 && h('ol.menu-card', v.courses.map((c) => h('li', h('span.dish', c.dish), c.detail && h('span.detail', c.detail)))),
+        menus.length > 0 && h('div.souvenir-thumbs', menus.map((p) => h('button', { onclick: () => lightbox(p) }, photo(p.thumb || p.path))))),
+
+      (wines.length > 0 || wineLists.length > 0) && h('div.menu-souvenir',
+        h('h3.section-title', 'In our glasses'),
+        wines.length > 0 && h('ol.menu-card.wines', wines.map((w) => h('li', h('a', { href: `#/wine/${w.id}` },
+          h('span.dish', [w.name, w.vintage].filter(Boolean).join(' ')),
+          h('span.detail', [w.producer, w.grapes, w.region].filter(Boolean).join(' · ')))))),
+        wineLists.length > 0 && h('div.souvenir-thumbs', wineLists.map((p) => h('button', { onclick: () => lightbox(p) }, photo(p.thumb || p.path))))),
 
       others.length > 0 && h('div.other-visits',
         h('h3.section-title', `Other evenings at ${r.name}`),

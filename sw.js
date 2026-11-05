@@ -1,7 +1,7 @@
 // Service worker: keeps the app working offline and lets installed phones
 // know when a new version has been published. Run tools/bump.py to release.
 
-const VERSION = '2026.11.05-4';
+const VERSION = '2026.11.05-5';
 const SHELL = `shell-${VERSION}`;
 const TILES = 'tiles-v1';
 
@@ -22,6 +22,7 @@ const ASSETS = [
   'icons/icon-192.png',
   'icons/icon-512.png',
   'js/app.js',
+  'js/claude.js',
   'js/config.js',
   'js/db.js',
   'js/github.js',

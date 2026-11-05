@@ -4,6 +4,7 @@ import { settings } from '../db.js';
 import { PEOPLE, APP_VERSION } from '../config.js';
 import { connectForm } from './onboarding.js';
 import { checkForUpdate } from '../updates.js';
+import * as claude from '../claude.js';
 
 export function renderSettings(root) {
   const s = store.getStatus();
@@ -28,6 +29,16 @@ export function renderSettings(root) {
       h('div.row-buttons',
         h('button.btn.ghost.small', { onclick: async () => { await store.sync(); renderSettings(root); toast('Synced'); } }, 'Sync now'),
         h('button.btn.ghost.small', { onclick: () => showConnect(root) }, s.connected ? 'Change key' : 'Connect'),
+      ),
+    ),
+
+    h('div.group',
+      h('h3.eyebrow', 'Claude (optional)'),
+      h('p.muted', { style: { fontSize: '13px' } }, 'With an Anthropic API key, Claude researches chef bios and wine profiles across the web, and reads menus and wine lists from your photos. The key stays on this phone. A research costs a few cents.'),
+      h('div.kv', h('span', 'Key'), h('span', claude.hasKey() ? 'Set on this phone' : 'Not set')),
+      h('div.row-buttons',
+        h('button.btn.ghost.small', { onclick: () => showClaudeKey(root) }, claude.hasKey() ? 'Change key' : 'Add a key'),
+        claude.hasKey() && h('button.btn.ghost.small', { onclick: () => { settings.set('claudeKey', ''); toast('Key removed'); renderSettings(root); } }, 'Remove'),
       ),
     ),
 
@@ -57,6 +68,33 @@ export function renderSettings(root) {
     ),
   );
   root.replaceChildren(page);
+}
+
+function showClaudeKey(root) {
+  const input = h('input.input', { type: 'password', placeholder: 'sk-ant-…', autocomplete: 'off', autocapitalize: 'off', spellcheck: false });
+  const err = h('p.error-text');
+  const btn = h('button.btn.primary.block', { type: 'button', onclick: async () => {
+    const key = input.value.trim();
+    if (!key) return;
+    btn.disabled = true; btn.textContent = 'Checking…'; err.textContent = '';
+    try {
+      await claude.checkKey(key);
+      settings.set('claudeKey', key);
+      toast('Claude is ready'); renderSettings(root);
+    } catch (e) {
+      err.textContent = e?.status === 401 ? 'That key was not accepted.' : `Could not check the key (${e?.message || 'offline?'}).`;
+      btn.disabled = false; btn.textContent = 'Save key';
+    }
+  } }, 'Save key');
+  root.replaceChildren(h('div.page.settings',
+    h('div.topbar', h('button.text-btn', { onclick: () => renderSettings(root) }, '‹ Settings')),
+    h('h1', 'Claude key'),
+    h('ol.steps',
+      h('li', 'Go to ', h('a', { href: 'https://platform.claude.com/settings/keys', target: '_blank', rel: 'noopener' }, 'platform.claude.com → API keys'), ' and sign in.'),
+      h('li', 'Create a key named “Table for Two” and copy it.'),
+      h('li', 'Paste it below. Do this on each phone.')),
+    h('form', { onsubmit: (e) => { e.preventDefault(); btn.click(); } }, h('div.field', h('label', 'API key'), input), err, btn),
+  ));
 }
 
 function showConnect(root) {

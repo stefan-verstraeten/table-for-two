@@ -9,7 +9,7 @@ import { renderMap, teardownMap } from './views/map.js';
 import { renderSettings } from './views/settings.js';
 import { registerUpdates } from './updates.js';
 import { renderLane, renderRestaurants, renderRestaurant, goRandom } from './views/lane.js';
-import { renderList, renderDetail, renderProfileEdit } from './views/profiles.js';
+import { renderList, renderDetail, renderProfileEdit, linkChefs } from './views/profiles.js';
 import { renderWishes } from './views/wishes.js';
 
 const app = document.getElementById('app');
@@ -76,7 +76,7 @@ function start() {
   app.replaceChildren(view, tabs);
   window.addEventListener('hashchange', route);
   route();
-  store.sync();
+  store.sync().catch(console.error).finally(() => linkChefs().catch(console.error));
   window.addEventListener('online', () => store.sync());
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') store.sync();

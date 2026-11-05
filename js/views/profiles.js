@@ -1,19 +1,28 @@
-// Chefs and wines: one-page profiles drafted from public sources (Wikipedia),
-// edited by either of us, and only "agreed" once both have accepted the text.
+// Chefs and wines: one-page profiles drafted from public sources (Claude web
+// research when a key is set, otherwise Wikipedia + Wikidata), edited by
+// either of us, and only "agreed" once both have accepted the content.
 
 import * as store from '../store.js';
 import { h, icon, toast, sheet, confirmSheet, formatDate, stars } from '../ui.js';
 import { PEOPLE } from '../config.js';
 import * as wiki from '../wiki.js';
+import * as claude from '../claude.js';
 import { backBar, sortName } from './lane.js';
 
-const WINE_STYLES = ['Red', 'White', 'Rosé', 'Sparkling', 'Sweet', 'Fortified'];
+export const WINE_STYLES = ['Red', 'White', 'Rosé', 'Sparkling', 'Sweet', 'Fortified', 'Orange'];
 
 export const KINDS = {
   chefs: {
     coll: 'chefs', one: 'chef', title: 'Chefs', textLabel: 'Chef’s bio', route: 'chef',
     searchHint: 'chef',
-    fields: [],
+    fields: [
+      { key: 'born', label: 'Born', ph: 'Date and place of birth' },
+      { key: 'education', label: 'Culinary education', multiline: true },
+      { key: 'trainedWith', label: 'Trained with', multiline: true, ph: 'Chefs and restaurants they learned under' },
+      { key: 'restaurants', label: 'Restaurants', multiline: true },
+      { key: 'awards', label: 'Awards & accolades', multiline: true },
+      { key: 'notable', label: 'Also noteworthy', multiline: true, ph: 'TV shows, books, signature dishes…' },
+    ],
     subtitle: (x) => restaurantsOfChef(x.id).map((r) => r.name).join(', '),
     visits: (id) => store.visits().filter((v) => v.chefId === id),
   },
@@ -32,17 +41,24 @@ export const KINDS = {
   },
 };
 
+const CONTENT_KEYS = (K) => ['text', 'style', ...K.fields.map((f) => f.key)];
+const CHEF_KEYS = KINDS.chefs.fields.map((f) => f.key);
+
 function restaurantsOfChef(chefId) {
   const ids = new Set(store.visits().filter((v) => v.chefId === chefId).map((v) => v.restaurantId));
   return [...ids].map((id) => store.restaurant(id)).filter(Boolean);
 }
 
+// A wine with only label facts (from a wine list) is still a placeholder;
+// a chef with researched facts is a draft to agree on.
+const hasContent = (x) => !!x.text || CHEF_KEYS.some((k) => x[k]);
+
 export function needsMyApproval(x) {
-  return !!x.text && !x.approvals?.[store.me()];
+  return hasContent(x) && !x.approvals?.[store.me()];
 }
 
 function approvalState(x) {
-  if (!x.text) return { cls: 'empty', label: 'No profile yet' };
+  if (!hasContent(x)) return { cls: 'empty', label: 'Placeholder — no profile yet' };
   const yes = PEOPLE.filter((p) => x.approvals?.[p]);
   if (yes.length === PEOPLE.length) return { cls: 'agreed', label: `Agreed by ${PEOPLE.join(' & ')}` };
   const waiting = PEOPLE.filter((p) => !x.approvals?.[p]);
@@ -60,12 +76,25 @@ export function renderList(root, kindKey) {
       const st = approvalState(x);
       return h('a.az-row', { href: `#/${K.route}/${x.id}` },
         h('span', h('b.serif', x.name), h('small', K.subtitle(x) || '—')),
-        h(`span.badge-state.${st.cls}`, st.cls === 'agreed' ? '✓' : needsMyApproval(x) ? 'Your turn' : st.cls === 'draft' ? 'Draft' : ''));
+        h(`span.badge-state.${st.cls}`, st.cls === 'agreed' ? '✓' : needsMyApproval(x) ? 'Your turn' : st.cls === 'draft' ? 'Draft' : 'To write'));
     })) : h('p.muted', kindKey === 'chefs'
       ? 'Chefs appear here when you fill in “Chef” on a visit. You can also add one yourself.'
       : 'Wines appear here when you add them to a visit. You can also add one yourself.'),
     h('a.btn.ghost.block', { href: `#/${K.route}-edit/new`, style: { marginTop: '24px' } }, icon('plus'), `Add a ${K.one}`),
   ));
+}
+
+const hostOf = (u) => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return u; } };
+
+function sourceLine(x) {
+  if (!x.source) return null;
+  if (x.source.kind === 'web') {
+    const urls = x.source.urls || [];
+    return h('p.byline', 'Researched on the web',
+      urls.length ? [': ', urls.map((u, i) => [i ? ', ' : '', h('a', { href: u, target: '_blank', rel: 'noopener' }, hostOf(u))])] : '',
+      x.edited ? ' · edited by us' : '');
+  }
+  return h('p.byline', 'Based on ', h('a', { href: x.source.url, target: '_blank', rel: 'noopener' }, `${x.source.title} — Wikipedia (${x.source.lang})`), x.edited ? ', edited by us' : '');
 }
 
 // ---------- detail ----------
@@ -78,6 +107,7 @@ export function renderDetail(root, kindKey, id) {
   const visits = K.visits(id);
   const facts = K.fields.map((f) => [f.label, x[f.key]]).filter(([, v]) => v);
   if (x.style) facts.unshift(['Style', x.style]);
+  const empty = !hasContent(x);
 
   root.replaceChildren(h('div.page',
     h('div.topbar',
@@ -89,16 +119,18 @@ export function renderDetail(root, kindKey, id) {
       h('h1', x.name),
       K.subtitle(x) && h('div.place', K.subtitle(x))),
 
-    facts.length > 0 && h('dl.facts', facts.map(([k, v]) => h('div', h('dt', k), h('dd', v)))),
+    facts.length > 0 && h('dl.facts.profile-facts', facts.map(([k, v]) => h('div', h('dt', k), h('dd', v)))),
 
     h('div.ornament', '· · ·'),
     x.text
       ? h('div.profile-text', x.text.split(/\n{2,}/).map((p) => h('p', p)))
-      : h('p.muted', { style: { textAlign: 'center', fontFamily: 'var(--serif)', fontStyle: 'italic', fontSize: '19px' } },
-          h('a', { href: `#/${K.route}-edit/${id}` }, `Write the ${K.textLabel.toLowerCase()}, or look it up…`)),
-    x.source && h('p.byline', 'Based on ', h('a', { href: x.source.url, target: '_blank', rel: 'noopener' }, `${x.source.title} — Wikipedia (${x.source.lang})`), x.edited ? ', edited by us' : ''),
+      : h('div', { style: { textAlign: 'center' } },
+          h('p.muted', { style: { fontFamily: 'var(--serif)', fontStyle: 'italic', fontSize: '19px' } },
+            `A placeholder for now — the ${K.textLabel.toLowerCase()} is still to be written.`),
+          h('a.btn.small.ghost', { href: `#/${K.route}-edit/${id}?research` }, icon('sparkle'), claude.hasKey() ? 'Research it on the web' : 'Look it up')),
+    sourceLine(x),
 
-    x.text && h(`div.approval.${st.cls}`,
+    !empty && h(`div.approval.${st.cls}`,
       h('div', h('div.eyebrow', 'Status'), h('div', st.label)),
       needsMyApproval(x) && h('button.btn.small.accent', { onclick: async () => {
         await store.save(K.coll, id, { [`approvals.${me}`]: true });
@@ -116,25 +148,72 @@ export function renderDetail(root, kindKey, id) {
 }
 
 // ---------- edit ----------
-export function renderProfileEdit(root, kindKey, id) {
+export function renderProfileEdit(root, kindKey, rawId) {
   const K = KINDS[kindKey];
   const me = store.me();
+  const [id, query] = (rawId || '').split('?');
   const isNew = !id || id === 'new';
   const orig = isNew ? {} : (store.get(K.coll, id) || {});
   const x = JSON.parse(JSON.stringify(orig));
   const recId = isNew ? store.newId() : id;
 
   const nameIn = h('input.input.title-input', { value: x.name || '', placeholder: kindKey === 'chefs' ? 'Chef’s name' : 'Wine name', oninput: (e) => { x.name = e.target.value; } });
-  const fieldEls = K.fields.map((f) => h('div.field', h('label', f.label),
-    h('input.input', { value: x[f.key] || '', inputmode: f.inputmode, oninput: (e) => { x[f.key] = e.target.value; } })));
+  const inputs = {};
+  const fieldEls = K.fields.map((f) => {
+    const el = f.multiline
+      ? h('textarea.textarea.short', { placeholder: f.ph || '', oninput: (e) => { x[f.key] = e.target.value; } })
+      : h('input.input', { value: x[f.key] || '', placeholder: f.ph || '', inputmode: f.inputmode, oninput: (e) => { x[f.key] = e.target.value; } });
+    if (f.multiline) el.value = x[f.key] || '';
+    inputs[f.key] = el;
+    return h('div.field', h('label', f.label), el);
+  });
+  const setField = (k, v) => { x[k] = v; if (inputs[k]) inputs[k].value = v || ''; };
   const styleBox = h('div');
   const renderStyle = () => styleBox.replaceChildren(kindKey === 'wines' ? h('div.field', h('label', 'Style'),
-    h('div.segmented', WINE_STYLES.map((s) => h(`button${x.style === s ? '.on' : ''}`, { type: 'button', onclick: () => { x.style = x.style === s ? undefined : s; renderStyle(); } }, s)))) : '');
+    h('div.segmented.wrap', WINE_STYLES.map((s) => h(`button${x.style === s ? '.on' : ''}`, { type: 'button', onclick: () => { x.style = x.style === s ? undefined : s; renderStyle(); } }, s)))) : '');
   const text = h('textarea.textarea.memories', { placeholder: `The ${K.textLabel.toLowerCase()}, in a page or less.`, oninput: (e) => { x.text = e.target.value; x.edited = true; } });
   text.value = x.text || '';
   const sourceNote = h('p.hint');
-  const renderSource = () => { sourceNote.textContent = x.source ? `Source: ${x.source.title} (Wikipedia ${x.source.lang}). Edit freely.` : ''; };
+  const renderSource = () => {
+    sourceNote.textContent = !x.source ? ''
+      : x.source.kind === 'web' ? `Researched on the web (${(x.source.urls || []).map(hostOf).join(', ') || 'no sources listed'}). Check and edit freely.`
+      : `Source: ${x.source.title} (Wikipedia ${x.source.lang}). Edit freely.`;
+  };
+  const anyContent = () => !!x.text || CHEF_KEYS.some((k) => x[k]);
 
+  // Claude: web research filling the facts and the text.
+  async function research() {
+    const term = (nameIn.value || '').trim();
+    if (!term) { toast('Type a name first'); return; }
+    if (anyContent() && !(await confirmSheet('Replace with fresh research?', 'What the research finds replaces what is in the fields now.', 'Research'))) return;
+    const body = h('div.research-wait', h('div.spinner'), h('h3.serif', 'Researching…'),
+      h('p.muted', `Claude is reading up on ${term} across the web. This takes a minute or two — keep the app open.`));
+    const s = sheet(body);
+    try {
+      if (kindKey === 'chefs') {
+        const ctx = restaurantsOfChef(recId).map((r) => [r.name, r.city, r.country].filter(Boolean).join(', ')).join('; ');
+        const r = await claude.researchChef(term, ctx && `chef of ${ctx}`);
+        for (const f of K.fields) if (r[f.key]) setField(f.key, r[f.key]);
+        if (r.bio) { x.text = r.bio; text.value = r.bio; }
+        x.source = { kind: 'web', urls: (r.sources || []).slice(0, 5) };
+      } else {
+        const r = await claude.researchWine({ ...x, name: term });
+        for (const k of ['producer', 'region', 'country', 'grapes']) if (r[k]) setField(k, r[k]);
+        if (r.style && WINE_STYLES.includes(r.style)) { x.style = r.style; renderStyle(); }
+        if (r.profile) { x.text = r.profile; text.value = r.profile; }
+        x.source = { kind: 'web', urls: (r.sources || []).slice(0, 5) };
+      }
+      x.edited = false;
+      renderSource(); s.close();
+      toast('Draft filled in — check it, then save');
+    } catch (e) {
+      console.error(e);
+      body.replaceChildren(h('h3.serif', 'That didn’t work'), h('p.muted', e.message || 'Claude is not reachable right now.'),
+        h('button.btn.ghost.block', { onclick: () => { s.close(); lookUp(); } }, 'Try Wikipedia instead'));
+    }
+  }
+
+  // Wikipedia (+ Wikidata facts for chefs).
   async function lookUp() {
     const term = (nameIn.value || '').trim();
     if (!term) { toast('Type a name first'); return; }
@@ -151,15 +230,17 @@ export function renderProfileEdit(root, kindKey, id) {
         results.length ? h('div.place-list', results.map((r) => h('button', { onclick: async () => {
           body.replaceChildren(h('p.muted', 'Fetching the article…'));
           try {
-            const a = await wiki.article(r.lang, r.title);
+            const [a, f] = await Promise.all([wiki.article(r.lang, r.title), kindKey === 'chefs' ? wiki.facts(r.lang, r.title).catch(() => ({})) : {}]);
             if (x.text && !(await confirmSheet('Replace the current text?', 'The text you have now will be replaced by the Wikipedia version.', 'Replace'))) { s.close(); return; }
             x.text = a.text; text.value = a.text; x.edited = false;
+            for (const [k, v] of Object.entries(f)) if (v && !x[k]) setField(k, v);
             x.source = a.source;
             if (a.image) x.image = a.image;
             renderSource(); s.close();
-            toast(r.lang === 'en' ? 'Draft filled in — edit as you like' : `Draft filled in from the ${r.lang === 'fr' ? 'French' : 'Dutch'} Wikipedia`);
+            toast(r.lang === 'en' ? 'Draft filled in — edit as you like' : `Filled in from the ${r.lang === 'fr' ? 'French' : 'Dutch'} Wikipedia — edit as you like`);
           } catch { body.replaceChildren(h('p.muted', 'Could not fetch the article.')); }
-        } }, h('span', r.title, h('small', { style: { display: 'block' } }, r.snippet.slice(0, 140) + '…')), h('small', r.lang.toUpperCase())))) : h('p.muted', 'Nothing found. You can write it yourselves.'),
+        } }, h('span', r.title, h('small', { style: { display: 'block' } }, r.snippet.slice(0, 140) + '…')), h('small', r.lang.toUpperCase())))) : h('p.muted', 'Nothing on Wikipedia. You can write it yourselves.'),
+        !claude.hasKey() && h('p.hint', 'Tip: add a Claude key under You to research the whole web instead — much richer, especially for chefs without a Wikipedia page.'),
       );
     } catch { body.replaceChildren(h('p.muted', 'Wikipedia is not reachable right now.')); }
   }
@@ -168,16 +249,16 @@ export function renderProfileEdit(root, kindKey, id) {
     x.name = (nameIn.value || '').trim();
     if (!x.name) { toast('Give it a name'); return; }
     const patch = {};
-    for (const k of ['name', 'style', 'image', 'source', 'edited', ...K.fields.map((f) => f.key)]) {
-      if (JSON.stringify(x[k] ?? null) !== JSON.stringify(orig[k] ?? null)) patch[k] = x[k];
+    for (const k of ['name', 'image', 'source', 'edited', ...CONTENT_KEYS(K)]) {
+      if (JSON.stringify(x[k] || null) !== JSON.stringify(orig[k] || null)) patch[k] = x[k] || undefined;
     }
-    if ((x.text || '') !== (orig.text || '')) {
-      patch.text = x.text;
+    const contentChanged = CONTENT_KEYS(K).some((k) => k in patch);
+    if (contentChanged) {
       patch.textBy = me;
-      patch.approvals = { [me]: true }; // a changed text needs the other's OK again
+      patch.approvals = { [me]: true }; // changed content needs the other's OK again
     }
     if (isNew || Object.keys(patch).length) await store.save(K.coll, recId, patch);
-    toast(patch.approvals ? `Saved — waiting for ${PEOPLE.filter((p) => p !== me).join(' & ')}` : 'Saved');
+    toast(contentChanged && hasContent(x) ? `Saved — waiting for ${PEOPLE.filter((p) => p !== me).join(' & ')}` : 'Saved');
     location.hash = `#/${K.route}/${recId}`;
   }
 
@@ -195,14 +276,15 @@ export function renderProfileEdit(root, kindKey, id) {
       h('span.eyebrow', isNew ? `New ${K.one}` : `Edit ${K.one}`),
       h('button.text-btn', { type: 'button', onclick: save }, 'Save')),
     h('div.field', h('label', 'Name'), nameIn),
+    h('div.research-bar',
+      claude.hasKey() && h('button.btn.small.accent', { type: 'button', onclick: research }, icon('sparkle'), 'Research on the web'),
+      h('button.btn.small.ghost', { type: 'button', onclick: lookUp }, 'Find on Wikipedia')),
     styleBox,
     fieldEls,
     h('div.field',
-      h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'end', marginBottom: '7px' } },
-        h('label.field-label', { style: { margin: 0 } }, K.textLabel),
-        h('button.btn.small.ghost', { type: 'button', onclick: lookUp }, icon('sparkle'), 'Find on Wikipedia')),
+      h('label', K.textLabel),
       text, sourceNote,
-      h('p.hint', 'Saving a changed text asks the other one of you to accept it.')),
+      h('p.hint', 'Saving changes asks the other one of you to accept them.')),
     x.image && h('div.field', h('label', 'Portrait'),
       h('div', { style: { display: 'flex', gap: '12px', alignItems: 'center' } },
         h('img', { src: x.image, alt: '', style: { width: '64px', height: '64px', objectFit: 'cover', borderRadius: '2px' }, referrerpolicy: 'no-referrer' }),
@@ -211,15 +293,36 @@ export function renderProfileEdit(root, kindKey, id) {
     !isNew && h('button.btn.ghost.block', { type: 'button', style: { marginTop: '10px', color: 'var(--burgundy)' }, onclick: del }, `Remove this ${K.one}`),
   ));
   window.scrollTo(0, 0);
+  if (query === 'research') setTimeout(() => (claude.hasKey() ? research() : lookUp()), 50);
 }
 
-// Find a chef/wine by name, or create it. Used by the visit editor.
+// Find a chef/wine by name, or create it (a placeholder page). Used by the visit editor.
 export async function ensureByName(coll, name, extra = {}) {
   const n = (name || '').trim();
   if (!n) return null;
-  const found = store.list(coll).find((x) => x.name.trim().toLowerCase() === n.toLowerCase());
-  if (found) return found.id;
+  const key = (s) => String(s || '').trim().toLowerCase();
+  const found = store.list(coll).find((x) => key(x.name) === key(n)
+    && (!extra.producer || !x.producer || key(x.producer) === key(extra.producer))
+    && (!extra.vintage || !x.vintage || key(x.vintage) === key(extra.vintage)));
+  if (found) {
+    const fill = {};
+    for (const [k, v] of Object.entries(extra)) if (v && !found[k]) fill[k] = v;
+    if (Object.keys(fill).length) await store.save(coll, found.id, fill);
+    return found.id;
+  }
   const id = store.newId();
-  await store.save(coll, id, { name: n, ...extra });
+  const clean = Object.fromEntries(Object.entries(extra).filter(([, v]) => v));
+  await store.save(coll, id, { name: n, ...clean });
   return id;
+}
+
+// Visits that name a chef but aren't linked to a chef page yet (e.g. entered
+// before chef pages existed): link them, creating the placeholder page.
+export async function linkChefs() {
+  for (const v of store.visits()) {
+    if (v.chef && (!v.chefId || !store.get('chefs', v.chefId))) {
+      const cid = await ensureByName('chefs', v.chef);
+      if (cid) await store.save('visits', v.id, { chefId: cid });
+    }
+  }
 }

@@ -3,7 +3,7 @@ import { h, photo, formatDate, stars, yearOf, icon, STAR_SVG } from '../ui.js';
 
 function coverOf(v) {
   const ps = v.photos || [];
-  return ps.find((p) => p.id === v.coverPhotoId) || ps.find((p) => p.kind !== 'menu') || ps[0] || null;
+  return ps.find((p) => p.id === v.coverPhotoId) || ps.find((p) => !p.kind || p.kind === 'photo') || ps[0] || null;
 }
 export { coverOf };
 

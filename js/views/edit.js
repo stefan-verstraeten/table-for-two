@@ -3,11 +3,59 @@ import { h, icon, toast, sheet, confirmSheet, photo, monthName, formatDate, rati
 import { RATINGS, DATE_PRECISIONS, STAR_KINDS, PEOPLE } from '../config.js';
 import { processFile, summarise } from '../photos.js';
 import * as places from '../places.js';
-import { ensureByName } from './profiles.js';
+import { ensureByName, WINE_STYLES } from './profiles.js';
+import * as claude from '../claude.js';
 
 const VISIT_FIELDS = ['restaurantId', 'date', 'meal', 'occasion', 'stars', 'chef', 'chefId', 'menu', 'wine', 'wineIds',
-  'companions', 'memorableDish', 'memories', 'memoriesBy', 'photos', 'coverPhotoId'];
-const REST_FIELDS = ['name', 'city', 'country', 'countryCode', 'lat', 'lon', 'currentStars'];
+  'companions', 'memorableDish', 'memories', 'memoriesBy', 'photos', 'coverPhotoId', 'courses'];
+const REST_FIELDS = ['name', 'city', 'country', 'countryCode', 'lat', 'lon', 'currentStars', 'address'];
+const PHOTO_KINDS = { photo: 'Photo', menu: 'Menu', winelist: 'Wine list' };
+
+// "10.30, -84.81", 10°18'05"N 84°48'30"W, or a Google / Apple Maps link.
+export function parseCoords(text) {
+  const t = (text || '').trim();
+  if (!t) return null;
+  const ok = (lat, lon) => (Math.abs(lat) <= 90 && Math.abs(lon) <= 180 && !(lat === 0 && lon === 0) ? { lat, lon } : null);
+  let m = t.match(/!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)/)
+    || t.match(/@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/)
+    || t.match(/[?&](?:q|ll|query|sll|daddr|destination)=(-?\d+(?:\.\d+)?)(?:,|%2C)\s*(-?\d+(?:\.\d+)?)/i);
+  if (m) return ok(+m[1], +m[2]);
+  m = t.match(/^(-?\d{1,2}(?:\.\d+)?)\s*[,; ]\s*(-?\d{1,3}(?:\.\d+)?)$/);
+  if (m) return ok(+m[1], +m[2]);
+  const dms = [...t.matchAll(/(\d{1,3})\s*°\s*(?:(\d{1,2}(?:[.,]\d+)?)\s*['′’]\s*)?(?:(\d{1,2}(?:[.,]\d+)?)\s*(?:"|″|”|'')\s*)?([NSEWO])/gi)];
+  if (dms.length === 2) {
+    const val = (x) => { const v = +x[1] + (+(x[2] || '0').replace(',', '.')) / 60 + (+(x[3] || '0').replace(',', '.')) / 3600; return /[SW]/i.test(x[4]) ? -v : v; };
+    const [a, b] = /[NS]/i.test(dms[0][4]) ? dms : [dms[1], dms[0]];
+    return ok(val(a), val(b));
+  }
+  return null;
+}
+
+// Pasted menu text (e.g. copied with Live Text): blocks separated by blank lines,
+// first line the dish, the rest its details. Without blank lines: alternate lines.
+export function parseMenuText(text) {
+  const blocks = text.split(/\n\s*\n/).map((b) => b.split('\n').map((l) => l.trim()).filter(Boolean)).filter((b) => b.length);
+  if (blocks.length > 1) return blocks.map((b) => ({ dish: b[0], detail: b.slice(1).join(', ') }));
+  const lines = blocks[0] || [];
+  const out = [];
+  for (let i = 0; i < lines.length; i += 2) out.push({ dish: lines[i], detail: lines[i + 1] || '' });
+  return out;
+}
+
+// Pasted wine list text: blocks of "Name 2023 / Producer / grapes / region".
+export function parseWineText(text) {
+  return text.split(/\n\s*\n/).map((b) => b.split('\n').map((l) => l.trim()).filter(Boolean)).filter((b) => b.length).map((b) => {
+    const m = b[0].match(/^(.*?)\s*\b((?:19|20)\d{2})\b\s*(.*)$/);
+    const name = m ? [m[1], m[3]].filter(Boolean).join(' ').trim() : b[0];
+    return { name: name || b[0], vintage: m ? m[2] : '', producer: b[1] || '', grapes: b[2] || '', region: b.slice(3).join(', ') };
+  });
+}
+
+const coursesToText = (cs) => (cs || []).map((c) => [c.dish, c.detail].filter(Boolean).join(' — ')).join('\n');
+const textToCourses = (t) => t.split('\n').map((l) => l.trim()).filter(Boolean).map((l) => {
+  const [dish, ...rest] = l.split(/\s+[—–-]\s+/);
+  return { dish: dish.trim(), detail: rest.join(' — ').trim() };
+});
 
 const same = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 const clone = (o) => JSON.parse(JSON.stringify(o ?? null));
@@ -63,6 +111,9 @@ export function renderEdit(root, id, prefill = '') {
   const countryInput = input(r.country, (val) => { r.country = val; r.countryCode = ''; });
   const acBox = h('div');
   const locNote = h('p.hint');
+  const addrInput = h('input.input', { value: r.address || '', placeholder: 'Street address, GPS (10.30, -84.81) or a maps link', autocomplete: 'off', autocapitalize: 'off' });
+  addrInput.addEventListener('input', () => { const t = addrInput.value.trim(); if (!parseCoords(t)) r.address = t || undefined; });
+  addrInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); locateAddress(); } });
 
   function setRestaurantFields(src) {
     if (src.name != null) { r.name = src.name; nameInput.value = src.name; }
@@ -110,7 +161,39 @@ export function renderEdit(root, id, prefill = '') {
         h('h3.serif', { style: { fontSize: '24px', margin: '0 0 6px' } }, 'Which one?'),
         results.length ? h('div.place-list', results.map((p) => h('button', {
           onclick: () => { setRestaurantFields({ city: p.city, country: p.country, countryCode: p.countryCode, lat: p.lat, lon: p.lon }); s.close(); toast('Location set'); },
-        }, h('span', p.name, h('small', { style: { display: 'block' } }, p.label)), ''))) : h('p.muted', 'Nothing found. Try adding the city.'),
+        }, h('span', p.name, h('small', { style: { display: 'block' } }, p.label)), ''))) : h('p.muted', 'Nothing found. Not every restaurant is on OpenStreetMap — type its address or paste GPS coordinates in the field below the map button.'),
+      );
+    } catch {
+      body.replaceChildren(h('p.muted', 'The lookup is not available right now (are you offline?).'));
+    }
+  }
+
+  async function locateAddress() {
+    const text = addrInput.value.trim();
+    if (!text) { toast('Type an address or GPS coordinates'); addrInput.focus(); return; }
+    const pt = parseCoords(text);
+    if (pt) {
+      r.address = r.address && !parseCoords(r.address) ? r.address : undefined;
+      setRestaurantFields(pt);
+      fillCityFromCoords(pt, false);
+      toast('Pinned at those coordinates');
+      return;
+    }
+    if (/goo\.gl|maps\.app/i.test(text)) { toast('Short links can’t be read — open it and copy the coordinates instead'); return; }
+    r.address = text;
+    const body = h('div', h('h3.serif', { style: { fontSize: '24px', margin: '0 0 6px' } }, 'Find the address'), h('p.muted', `Looking up “${text}”…`));
+    const s = sheet(body);
+    try {
+      let results = await places.search(text);
+      if (!results.length && r.country && !text.toLowerCase().includes(r.country.toLowerCase())) results = await places.search(`${text}, ${r.country}`);
+      body.replaceChildren(
+        h('h3.serif', { style: { fontSize: '24px', margin: '0 0 6px' } }, results.length ? 'Is it here?' : 'Not found'),
+        results.length ? h('div.place-list', results.map((p) => h('button', {
+          onclick: () => {
+            setRestaurantFields({ lat: p.lat, lon: p.lon, ...(!r.city ? { city: p.city } : {}), ...(!r.country ? { country: p.country, countryCode: p.countryCode } : {}) });
+            s.close(); toast('Location set');
+          },
+        }, h('span', p.name, h('small', { style: { display: 'block' } }, p.label)), ''))) : h('p.muted', 'Try a simpler address (street and town), or paste GPS coordinates: in Google Maps, long-press the spot and copy the numbers at the top.'),
       );
     } catch {
       body.replaceChildren(h('p.muted', 'The lookup is not available right now (are you offline?).'));
@@ -214,7 +297,7 @@ export function renderEdit(root, id, prefill = '') {
       v.photos.map((p) => h('button.ph', { type: 'button', onclick: () => photoActions(p) },
         thumbFor(p),
         p.id === v.coverPhotoId && h('span.badge', 'Cover'),
-        p.kind === 'menu' && h('span.badge', { style: p.id === v.coverPhotoId ? { top: '26px' } : {} }, 'Menu'))),
+        p.kind && p.kind !== 'photo' && h('span.badge', { style: p.id === v.coverPhotoId ? { top: '26px' } : {} }, PHOTO_KINDS[p.kind]))),
       Array.from({ length: processing }, () => h('div.ph.processing', 'Reading…')),
       h('button.add-photo', { type: 'button', onclick: () => fileInput.click() }, icon('camera'), 'Add photos'),
     ));
@@ -225,16 +308,121 @@ export function renderEdit(root, id, prefill = '') {
       h('div', { style: { maxHeight: '40vh', overflow: 'hidden', marginBottom: '8px' } }, thumbFor(p)),
       p.takenAt && h('p.hint', `Taken ${new Date(p.takenAt).toLocaleString('en-GB', { dateStyle: 'long', timeStyle: 'short' })}${p.lat != null ? ' · has location' : ''}`),
       h('button', { onclick: () => { v.coverPhotoId = p.id; renderPhotos(); s.close(); } }, icon('cover'), 'Use as cover photo'),
-      h('button', { onclick: () => { p.kind = p.kind === 'menu' ? 'photo' : 'menu'; renderPhotos(); s.close(); } }, icon('menu'),
-        p.kind === 'menu' ? 'This is a photo, not the menu' : 'This is the menu (keep as souvenir)'),
+      p.kind !== 'menu' && h('button', { onclick: () => { p.kind = 'menu'; renderPhotos(); s.close(); offerRead(p); } }, icon('menu'), 'This is the menu'),
+      p.kind !== 'winelist' && h('button', { onclick: () => { p.kind = 'winelist'; renderPhotos(); s.close(); offerRead(p); } }, icon('wine'), 'This is the wine list or pairing'),
+      p.kind && p.kind !== 'photo' && h('button', { onclick: () => { p.kind = 'photo'; renderPhotos(); s.close(); } }, icon('camera'), 'Just a photo of the evening'),
+      p.kind === 'menu' && h('button', { onclick: () => { s.close(); readPhoto(p); } }, icon('sparkle'), 'Read the courses from this photo'),
+      p.kind === 'winelist' && h('button', { onclick: () => { s.close(); readPhoto(p); } }, icon('sparkle'), 'Read the wines from this photo'),
       h('button', { style: { color: 'var(--burgundy)' }, onclick: () => {
         v.photos = v.photos.filter((x) => x.id !== p.id);
         newBlobs.delete(p.path); newBlobs.delete(p.thumb);
         if (origVisit.photos?.some((x) => x.id === p.id)) removedPhotoIds.add(p.id);
-        if (v.coverPhotoId === p.id) v.coverPhotoId = v.photos.find((x) => x.kind !== 'menu')?.id || v.photos[0]?.id;
+        if (v.coverPhotoId === p.id) v.coverPhotoId = v.photos.find((x) => !x.kind || x.kind === 'photo')?.id || v.photos[0]?.id;
         renderPhotos(); s.close();
       } }, icon('trash'), 'Remove photo'),
     ));
+  }
+
+  // ---------- reading menus and wine lists ----------
+  async function blobOf(p) {
+    if (newBlobs.has(p.path)) return newBlobs.get(p.path);
+    return (await fetch(await store.photoURL(p.path))).blob();
+  }
+
+  function offerRead(p) {
+    const what = p.kind === 'menu' ? 'courses' : 'wines';
+    const already = p.kind === 'menu' ? (v.courses || []).length : v.wineIds.length;
+    if (already) { toast(`Marked as ${PHOTO_KINDS[p.kind].toLowerCase()}`); return; }
+    const s = sheet(h('div.confirm',
+      h('h3.serif', p.kind === 'menu' ? 'Read the menu?' : 'Read the wine list?'),
+      h('p.muted', claude.hasKey()
+        ? `Claude can read the ${what} from the photo${p.kind === 'winelist' ? ' and give each wine its own page' : ''}. You check the result before anything is added.`
+        : `Copy the text from the photo (in Photos, press and hold the text, then Copy) and paste it here${p.kind === 'winelist' ? ' — each wine then gets its own page' : ''}.`),
+      h('div.row-buttons',
+        h('button.btn.ghost', { onclick: () => s.close() }, 'Not now'),
+        h('button.btn.primary', { onclick: () => { s.close(); readPhoto(p); } }, claude.hasKey() ? 'Read it' : 'Paste text'))));
+  }
+
+  async function readPhoto(p) {
+    const isMenu = p.kind === 'menu';
+    if (!claude.hasKey()) { pasteText(isMenu); return; }
+    const body = h('div.research-wait', h('div.spinner'), h('h3.serif', 'Reading the photo…'), h('p.muted', 'This takes a few seconds.'));
+    const s = sheet(body);
+    try {
+      const blob = await blobOf(p);
+      if (isMenu) {
+        const res = await claude.readMenu(blob);
+        s.close();
+        reviewCourses(res.courses || [], res.title);
+      } else {
+        const wines = await claude.readWineList(blob);
+        s.close();
+        reviewWines(wines);
+      }
+    } catch (e) {
+      console.error(e);
+      body.replaceChildren(h('h3.serif', 'Couldn’t read it'), h('p.muted', e.message || 'Claude is not reachable right now.'),
+        h('button.btn.ghost.block', { onclick: () => { s.close(); pasteText(isMenu); } }, 'Paste the text instead'));
+    }
+  }
+
+  function pasteText(isMenu) {
+    const ta = h('textarea.textarea', { placeholder: isMenu ? 'Pompoen\nZoommeer paling, tsukudani, gember\n\nArtisjok\nansjovis, olijvencake…' : 'Inter-Val 2023\nChâteau de Bonnezeaux\nchenin blanc\nVallée de la Loire\n\nL’Iris 2023\n…', style: { minHeight: '220px' } });
+    const s = sheet(h('div',
+      h('h3.serif', { style: { fontSize: '24px', margin: '0 0 6px' } }, isMenu ? 'Paste the menu' : 'Paste the wine list'),
+      h('p.hint', 'Leave an empty line between courses or wines.'),
+      ta,
+      h('div.row-buttons',
+        h('button.btn.ghost', { onclick: () => s.close() }, 'Cancel'),
+        h('button.btn.primary', { onclick: () => {
+          const t = ta.value.trim(); if (!t) return;
+          s.close();
+          if (isMenu) reviewCourses(parseMenuText(t)); else reviewWines(parseWineText(t));
+        } }, 'Next'))));
+    setTimeout(() => ta.focus(), 350);
+  }
+
+  function reviewCourses(courses, title) {
+    if (!courses.length) { toast('No courses found'); return; }
+    const s = sheet(h('div',
+      h('h3.serif', { style: { fontSize: '24px', margin: '0 0 10px' } }, `${courses.length} courses`),
+      h('ol.course-list', courses.map((c) => h('li', h('b', c.dish), c.detail && h('small', c.detail)))),
+      h('div.row-buttons',
+        h('button.btn.ghost', { onclick: () => s.close() }, 'Cancel'),
+        h('button.btn.primary', { onclick: () => {
+          v.courses = courses.map((c) => ({ dish: (c.dish || '').trim(), detail: (c.detail || '').trim() })).filter((c) => c.dish);
+          if (title && !v.menu) { v.menu = title; menuInput.value = title; }
+          coursesInput.value = coursesToText(v.courses);
+          s.close(); toast('Courses added — edit them under “The menu”');
+        } }, 'Use these'))));
+  }
+
+  function reviewWines(wines) {
+    wines = wines.filter((w) => (w.name || '').trim());
+    if (!wines.length) { toast('No wines found'); return; }
+    const picked = new Set(wines.map((_, i) => i));
+    const s = sheet(h('div',
+      h('h3.serif', { style: { fontSize: '24px', margin: '0 0 4px' } }, `${wines.length} wine${wines.length > 1 ? 's' : ''}`),
+      h('p.hint', 'Each one gets its own wine page, linked to this evening.'),
+      h('div.wine-picks', wines.map((w, i) => h('label.wine-pick',
+        h('input', { type: 'checkbox', checked: true, onchange: (e) => { e.target.checked ? picked.add(i) : picked.delete(i); } }),
+        h('span', h('b.serif', [w.name, w.vintage].filter(Boolean).join(' ')),
+          h('small', [w.producer, w.grapes, w.region].filter(Boolean).join(' · ')))))),
+      h('div.row-buttons',
+        h('button.btn.ghost', { onclick: () => s.close() }, 'Cancel'),
+        h('button.btn.primary', { onclick: async (e) => {
+          e.target.disabled = true;
+          for (const i of picked) {
+            const w = wines[i];
+            const wid = await ensureByName('wines', w.name, {
+              vintage: w.vintage ? String(w.vintage) : '', producer: w.producer, grapes: w.grapes,
+              region: w.region, country: w.country, style: WINE_STYLES.includes(w.style) ? w.style : '',
+            });
+            if (wid && !v.wineIds.includes(wid)) v.wineIds.push(wid);
+          }
+          s.close(); renderWines();
+          toast(`${picked.size} wine page${picked.size === 1 ? '' : 's'} created — save the visit to keep the link`);
+        } }, 'Add these wines'))));
   }
 
   // ---------- suggestions from photo metadata ----------
@@ -359,24 +547,27 @@ export function renderEdit(root, id, prefill = '') {
   chefInput.addEventListener('blur', () => setTimeout(() => chefAc.replaceChildren(), 200));
 
   // ---------- wines ----------
-  const newWineNames = [];
   const winesBox = h('div');
   function renderWines() {
-    const chips = [
-      ...v.wineIds.map((wid) => ({ label: store.get('wines', wid)?.name || '…', remove: () => { v.wineIds = v.wineIds.filter((x) => x !== wid); } })),
-      ...newWineNames.map((n) => ({ label: n, remove: () => newWineNames.splice(newWineNames.indexOf(n), 1) })),
-    ];
+    const chips = v.wineIds.map((wid) => {
+      const w = store.get('wines', wid);
+      return { label: w ? [w.name, w.vintage].filter(Boolean).join(' ') : '…', remove: () => { v.wineIds = v.wineIds.filter((x) => x !== wid); } };
+    });
     const wineIn = h('input.input', { placeholder: 'Add a wine…', autocomplete: 'off' });
     const ac = h('div');
-    const add = (fn) => { fn(); renderWines(); winesBox.querySelector('input')?.focus(); };
+    const add = async (fn) => { await fn(); renderWines(); winesBox.querySelector('input')?.focus(); };
     wineIn.addEventListener('input', () => {
       const q = wineIn.value.trim().toLowerCase();
       if (q.length < 2) { ac.replaceChildren(); return; }
       const m = store.list('wines').filter((w) => w.name.toLowerCase().includes(q) && !v.wineIds.includes(w.id)).slice(0, 5);
-      const exact = m.some((w) => w.name.toLowerCase() === q) || newWineNames.some((n) => n.toLowerCase() === q);
+      const exact = m.some((w) => w.name.toLowerCase() === q);
       ac.replaceChildren(h('div.autocomplete',
         m.map((w) => h('button', { type: 'button', onclick: () => add(() => v.wineIds.push(w.id)) }, w.name, h('small', [w.vintage, w.producer].filter(Boolean).join(' · ')))),
-        !exact && h('button', { type: 'button', onclick: () => add(() => newWineNames.push(wineIn.value.trim())) }, `Add “${wineIn.value.trim()}” as a new wine`)));
+        !exact && h('button', { type: 'button', onclick: () => add(async () => {
+          const wid = await ensureByName('wines', wineIn.value.trim());
+          if (wid && !v.wineIds.includes(wid)) v.wineIds.push(wid);
+          toast('Wine page created');
+        }) }, `Add “${wineIn.value.trim()}” as a new wine`)));
     });
     wineIn.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') { e.preventDefault(); ac.querySelector('button')?.click(); }
@@ -409,10 +600,8 @@ export function renderEdit(root, id, prefill = '') {
     v.restaurantId = rid;
     v.chef = (chefInput.value || '').trim() || undefined;
     v.chefId = v.chef ? await ensureByName('chefs', v.chef) : undefined;
-    for (const n of newWineNames) {
-      const wid = await ensureByName('wines', n);
-      if (wid && !v.wineIds.includes(wid)) v.wineIds.push(wid);
-    }
+    v.courses = textToCourses(coursesInput.value);
+    if (!v.courses.length) v.courses = undefined;
     if (!same(v.memories, origVisit.memories)) v.memoriesBy = me;
     const vPatch = {};
     for (const f of VISIT_FIELDS) if (!same(v[f], origVisit[f])) vPatch[f] = v[f];
@@ -439,6 +628,16 @@ export function renderEdit(root, id, prefill = '') {
   });
   memories.value = v.memories || '';
 
+  const menuInput = input(v.menu, (val) => { v.menu = val; }, { placeholder: 'e.g. Menu Prestige, 9 courses' });
+  const coursesInput = h('textarea.textarea.short', { placeholder: 'One course per line:  Dish — details' });
+  coursesInput.value = coursesToText(v.courses);
+  const readBtn = (kind, label) => h('button.btn.small.ghost', { type: 'button', onclick: () => {
+    const p = v.photos.find((x) => x.kind === kind);
+    if (p) readPhoto(p);
+    else if (claude.hasKey()) toast(`Add a photo of the ${kind === 'menu' ? 'menu' : 'wine list'} first, then tap it and mark it`);
+    else pasteText(kind === 'menu');
+  } }, icon('sparkle'), label);
+
   const page = h('div.page',
     h('div.topbar',
       h('a.icon-btn', { href: existing ? `#/visit/${visitId}` : '#/', 'aria-label': 'Cancel' }, icon('close')),
@@ -455,6 +654,8 @@ export function renderEdit(root, id, prefill = '') {
     h('div.field', { style: { marginTop: '-8px' } },
       h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' } },
         locNote, h('button.btn.small.ghost', { type: 'button', onclick: lookUpPlace }, icon('pin'), 'Find on map'))),
+    h('div.field', h('label', 'Address or GPS (if the map can’t find it)'),
+      h('div.input-row', addrInput, h('button.btn.small.ghost', { type: 'button', onclick: locateAddress }, 'Locate'))),
 
     h('h3.section-title', 'The visit'),
     field('When', dateBox),
@@ -465,8 +666,13 @@ export function renderEdit(root, id, prefill = '') {
 
     h('h3.section-title', 'The table'),
     h('div.field', { style: { position: 'relative' } }, h('label', 'Chef'), chefInput, chefAc),
-    field('Menu', input(v.menu, (val) => { v.menu = val; }, { placeholder: 'e.g. Menu Prestige, 9 courses' })),
-    field('Wines we drank', winesBox, 'Each wine gets its own profile page under Memory lane.'),
+    field('Menu', menuInput),
+    h('div.field',
+      h('div.label-row', h('label', 'The courses'), readBtn('menu', claude.hasKey() ? 'Read from photo' : 'Paste')),
+      coursesInput),
+    h('div.field',
+      h('div.label-row', h('label', 'Wines we drank'), readBtn('winelist', claude.hasKey() ? 'Read wine list' : 'Paste list')),
+      winesBox, h('p.hint', 'Each wine gets its own page under Memory lane as soon as you add it.')),
     field('Wine notes', input(v.wine, (val) => { v.wine = val; }, { placeholder: 'The pairing, or how it was served' })),
     field('With', input(v.companions, (val) => { v.companions = val; }, { placeholder: 'Just the two of us' })),
     field('The dish we remember', input(v.memorableDish, (val) => { v.memorableDish = val; })),
