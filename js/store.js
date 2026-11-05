@@ -11,7 +11,9 @@ import { db, settings } from './db.js';
 import { createClient, utf8ToBase64, blobToBase64 } from './github.js';
 
 const JOURNAL_PATH = 'journal.json';
-const EMPTY = () => ({ schema: 1, restaurants: {}, visits: {} });
+export const COLLECTIONS = ['restaurants', 'visits', 'chefs', 'wines', 'wishes'];
+const EMPTY = () => ({ schema: 1, restaurants: {}, visits: {}, chefs: {}, wines: {}, wishes: {} });
+function normalise(j) { for (const c of COLLECTIONS) j[c] ||= {}; return j; }
 
 let journal = EMPTY();
 let meta = { remoteSha: null, lastSyncAt: null, dirty: {}, removedPhotos: {}, seq: 0 };
@@ -66,7 +68,7 @@ async function persist() {
 }
 
 export async function load() {
-  journal = (await db.get('kv', 'journal')) || EMPTY();
+  journal = normalise((await db.get('kv', 'journal')) || EMPTY());
   meta = { ...meta, ...((await db.get('kv', 'meta')) || {}) };
   emit();
 }
@@ -79,6 +81,13 @@ export function restaurants() {
 export function restaurant(id) {
   const r = journal.restaurants[id];
   return r && !r.deleted ? r : null;
+}
+export function list(coll) {
+  return Object.values(journal[coll] || {}).filter((x) => !x.deleted);
+}
+export function get(coll, id) {
+  const x = journal[coll]?.[id];
+  return x && !x.deleted ? x : null;
 }
 export function visit(id) {
   const v = journal.visits[id];
@@ -167,8 +176,7 @@ export async function photoURL(path) {
 
 function mergeInto(base, local, dirty, removedPhotos) {
   const out = clone(base);
-  out.restaurants ||= {};
-  out.visits ||= {};
+  normalise(out);
   for (const key of Object.keys(dirty)) {
     const [coll, id] = key.split('/');
     const src = local[coll]?.[id];
@@ -224,7 +232,7 @@ async function doSync() {
 
     for (let attempt = 0; attempt < 4; attempt++) {
       const remote = await c.readText(JOURNAL_PATH);
-      const remoteJournal = remote ? JSON.parse(remote.text) : EMPTY();
+      const remoteJournal = normalise(remote ? JSON.parse(remote.text) : EMPTY());
       const snapshot = clone(meta.dirty);
       const removedSnapshot = clone(meta.removedPhotos);
       const hasChanges = Object.keys(snapshot).length > 0;
@@ -283,8 +291,9 @@ function describeChanges(dirty, merged) {
     const [coll, id] = keys[0].split('/');
     const rec = merged[coll][id];
     const name = coll === 'visits' ? merged.restaurants[rec?.restaurantId]?.name : rec?.name;
-    if (rec?.deleted) return `remove ${coll === 'visits' ? 'visit to ' : ''}${name || id}`;
-    return `${coll === 'visits' ? 'update visit to' : 'update'} ${name || id}`;
+    const noun = { chefs: 'chef ', wines: 'wine ', wishes: 'wish list: ' }[coll] || '';
+    if (rec?.deleted) return `remove ${coll === 'visits' ? 'visit to ' : noun}${name || id}`;
+    return `${coll === 'visits' ? 'update visit to' : 'update ' + noun}${coll === 'visits' ? ' ' : ''}${name || id}`;
   }
   return `update ${keys.length} entries`;
 }

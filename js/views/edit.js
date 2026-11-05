@@ -3,15 +3,16 @@ import { h, icon, toast, sheet, confirmSheet, photo, monthName, formatDate, rati
 import { RATINGS, DATE_PRECISIONS, STAR_KINDS, PEOPLE } from '../config.js';
 import { processFile, summarise } from '../photos.js';
 import * as places from '../places.js';
+import { ensureByName } from './profiles.js';
 
-const VISIT_FIELDS = ['restaurantId', 'date', 'meal', 'occasion', 'stars', 'chef', 'menu', 'wine',
+const VISIT_FIELDS = ['restaurantId', 'date', 'meal', 'occasion', 'stars', 'chef', 'chefId', 'menu', 'wine', 'wineIds',
   'companions', 'memorableDish', 'memories', 'memoriesBy', 'photos', 'coverPhotoId'];
 const REST_FIELDS = ['name', 'city', 'country', 'countryCode', 'lat', 'lon', 'currentStars'];
 
 const same = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 const clone = (o) => JSON.parse(JSON.stringify(o ?? null));
 
-export function renderEdit(root, id) {
+export function renderEdit(root, id, prefill = '') {
   const me = store.me();
   const existing = id ? store.visit(id) : null;
   if (id && !existing) { location.hash = '#/'; return; }
@@ -31,6 +32,20 @@ export function renderEdit(root, id) {
   v.stars ||= { kind: 'none' };
   const r = clone(origRest) || {};
   let restaurantId = existing?.restaurantId || null;
+  v.wineIds ||= [];
+  // Prefill: "r:<restaurantId>" (another evening at a known restaurant) or "w:<wishId>" (from the wish list)
+  const [pKind, pId] = (prefill || '').split(':');
+  const wish = pKind === 'w' ? store.get('wishes', pId) : null;
+  if (pKind === 'r' && store.restaurant(pId)) {
+    restaurantId = pId;
+    Object.assign(r, clone(store.restaurant(pId)));
+  }
+  if (wish) {
+    const known = store.restaurants().find((x) => x.name.toLowerCase() === (wish.name || '').toLowerCase());
+    if (known) { restaurantId = known.id; Object.assign(r, clone(known)); }
+    else Object.assign(r, { name: wish.name, city: wish.city, country: wish.country });
+    if (wish.stars?.kind === 'michelin') v.stars = { ...wish.stars, uncertain: false };
+  }
   const newBlobs = new Map(); // path -> blob, saved only when the visit is saved
   const removedPhotoIds = new Set();
   let processing = 0;
@@ -330,6 +345,50 @@ export function renderEdit(root, id) {
       (id) => { v.meal = v.meal === id ? undefined : id; renderMeal(); }));
   }
 
+  // ---------- chef ----------
+  const chefInput = h('input.input', { value: v.chef || '', autocomplete: 'off', placeholder: 'Who was in the kitchen' });
+  const chefAc = h('div');
+  chefInput.addEventListener('input', () => {
+    v.chef = chefInput.value;
+    const q = v.chef.trim().toLowerCase();
+    const m = q.length < 2 ? [] : store.list('chefs').filter((c) => c.name.toLowerCase().includes(q) && c.name.toLowerCase() !== q).slice(0, 5);
+    chefAc.replaceChildren(m.length ? h('div.autocomplete', m.map((c) => h('button', { type: 'button', onclick: () => {
+      v.chef = c.name; chefInput.value = c.name; chefAc.replaceChildren();
+    } }, c.name))) : '');
+  });
+  chefInput.addEventListener('blur', () => setTimeout(() => chefAc.replaceChildren(), 200));
+
+  // ---------- wines ----------
+  const newWineNames = [];
+  const winesBox = h('div');
+  function renderWines() {
+    const chips = [
+      ...v.wineIds.map((wid) => ({ label: store.get('wines', wid)?.name || '…', remove: () => { v.wineIds = v.wineIds.filter((x) => x !== wid); } })),
+      ...newWineNames.map((n) => ({ label: n, remove: () => newWineNames.splice(newWineNames.indexOf(n), 1) })),
+    ];
+    const wineIn = h('input.input', { placeholder: 'Add a wine…', autocomplete: 'off' });
+    const ac = h('div');
+    const add = (fn) => { fn(); renderWines(); winesBox.querySelector('input')?.focus(); };
+    wineIn.addEventListener('input', () => {
+      const q = wineIn.value.trim().toLowerCase();
+      if (q.length < 2) { ac.replaceChildren(); return; }
+      const m = store.list('wines').filter((w) => w.name.toLowerCase().includes(q) && !v.wineIds.includes(w.id)).slice(0, 5);
+      const exact = m.some((w) => w.name.toLowerCase() === q) || newWineNames.some((n) => n.toLowerCase() === q);
+      ac.replaceChildren(h('div.autocomplete',
+        m.map((w) => h('button', { type: 'button', onclick: () => add(() => v.wineIds.push(w.id)) }, w.name, h('small', [w.vintage, w.producer].filter(Boolean).join(' · ')))),
+        !exact && h('button', { type: 'button', onclick: () => add(() => newWineNames.push(wineIn.value.trim())) }, `Add “${wineIn.value.trim()}” as a new wine`)));
+    });
+    wineIn.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); ac.querySelector('button')?.click(); }
+    });
+    wineIn.addEventListener('blur', () => setTimeout(() => ac.replaceChildren(), 200));
+    winesBox.replaceChildren(
+      chips.length > 0 && h('div.chips', chips.map((c) => h('span.chip', c.label,
+        h('button', { type: 'button', 'aria-label': 'Remove', onclick: () => { c.remove(); renderWines(); } }, '×')))),
+      h('div', { style: { position: 'relative' } }, wineIn, ac),
+    );
+  }
+
   // ---------- save ----------
   async function save() {
     if (processing) { toast('Still reading photos…'); return; }
@@ -348,13 +407,20 @@ export function renderEdit(root, id) {
     for (const pid of removedPhotoIds) await store.forgetPhoto(visitId, pid);
 
     v.restaurantId = rid;
+    v.chef = (chefInput.value || '').trim() || undefined;
+    v.chefId = v.chef ? await ensureByName('chefs', v.chef) : undefined;
+    for (const n of newWineNames) {
+      const wid = await ensureByName('wines', n);
+      if (wid && !v.wineIds.includes(wid)) v.wineIds.push(wid);
+    }
     if (!same(v.memories, origVisit.memories)) v.memoriesBy = me;
     const vPatch = {};
     for (const f of VISIT_FIELDS) if (!same(v[f], origVisit[f])) vPatch[f] = v[f];
     for (const p of PEOPLE) if (!same(v.ratings[p], origVisit.ratings?.[p])) vPatch[`ratings.${p}`] = v.ratings[p];
     if (!existing || Object.keys(vPatch).length) await store.save('visits', visitId, vPatch);
 
-    toast(existing ? 'Saved' : 'Added to your journey');
+    if (wish && !existing) await store.save('wishes', wish.id, { doneVisitId: visitId });
+    toast(existing ? 'Saved' : wish ? 'A wish come true — added to your journey' : 'Added to your journey');
     location.hash = `#/visit/${visitId}`;
   }
 
@@ -398,9 +464,10 @@ export function renderEdit(root, id) {
     starsTodayBox,
 
     h('h3.section-title', 'The table'),
-    field('Chef', input(v.chef, (val) => { v.chef = val; })),
+    h('div.field', { style: { position: 'relative' } }, h('label', 'Chef'), chefInput, chefAc),
     field('Menu', input(v.menu, (val) => { v.menu = val; }, { placeholder: 'e.g. Menu Prestige, 9 courses' })),
-    field('Wine', input(v.wine, (val) => { v.wine = val; }, { placeholder: 'Pairing, or the bottle you chose' })),
+    field('Wines we drank', winesBox, 'Each wine gets its own profile page under Memory lane.'),
+    field('Wine notes', input(v.wine, (val) => { v.wine = val; }, { placeholder: 'The pairing, or how it was served' })),
     field('With', input(v.companions, (val) => { v.companions = val; }, { placeholder: 'Just the two of us' })),
     field('The dish we remember', input(v.memorableDish, (val) => { v.memorableDish = val; })),
 
@@ -413,7 +480,7 @@ export function renderEdit(root, id) {
       existing && h('button.btn.ghost.block', { type: 'button', style: { marginTop: '10px', color: 'var(--burgundy)' }, onclick: del }, 'Remove this visit')),
   );
 
-  renderLocNote(); renderDate(); renderStars(); renderStarsToday(); renderRatings(); renderPhotos(); renderMeal();
+  renderWines(); renderLocNote(); renderDate(); renderStars(); renderStarsToday(); renderRatings(); renderPhotos(); renderMeal();
   root.replaceChildren(page);
   window.scrollTo(0, 0);
 }

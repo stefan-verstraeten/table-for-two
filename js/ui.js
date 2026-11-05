@@ -54,7 +54,9 @@ export function yearOf(v) {
   return v.date?.precision !== 'unknown' && v.date?.y ? v.date.y : null;
 }
 
-const STAR_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.6l2.75 6.08 6.65.66-5 4.43 1.43 6.53L12 16.93 6.17 20.3l1.43-6.53-5-4.43 6.65-.66z"/></svg>';
+// The star symbol itself is defined once in index.html (<symbol id="mstar">).
+export const STAR_SVG = '<svg viewBox="0 0 100 100" aria-hidden="true"><use href="#mstar"/></svg>';
+export const STAR_PATH = document.getElementById('mstar')?.querySelector('path')?.getAttribute('d') || '';
 
 export function stars(s, { withLabel = false } = {}) {
   if (!s || s.kind === 'none' || !s.count) return null;
@@ -138,6 +140,10 @@ export const icons = {
   close: '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>',
   trash: '<svg viewBox="0 0 24 24"><path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13"/></svg>',
   menu: '<svg viewBox="0 0 24 24"><path d="M7 3h10v18H7z"/><path d="M10 8h4M10 12h4M10 16h2"/></svg>',
+  lane: '<svg viewBox="0 0 24 24"><path d="M4 20c4-1 5-5 8-8s5-4 8-4"/><circle cx="4" cy="20" r="1.2"/><circle cx="20" cy="8" r="1.2"/><path d="M14 4h6v6"/></svg>',
+  chef: '<svg viewBox="0 0 24 24"><path d="M7 14a4 4 0 01-.6-7.9A5 5 0 0117.6 6.1 4 4 0 0117 14"/><path d="M7 13v7h10v-7M7 17h10"/></svg>',
+  wine: '<svg viewBox="0 0 24 24"><path d="M8 3h8l-.4 5a3.6 3.6 0 01-7.2 0z"/><path d="M12 12v8M8.5 20.5h7"/></svg>',
+  heart: '<svg viewBox="0 0 24 24"><path d="M12 20s-7-4.4-7-10a4 4 0 017-2.6A4 4 0 0119 10c0 5.6-7 10-7 10z"/></svg>',
   cover: '<svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="1"/><path d="M3.5 16l5-5 4 4 3-3 5 5"/></svg>',
 };
 

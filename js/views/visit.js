@@ -13,9 +13,15 @@ export function renderVisit(root, id) {
 
   const facts = [
     ['Meal', v.meal && v.meal[0].toUpperCase() + v.meal.slice(1)],
-    ['Chef', v.chef || r.chef],
+    ['Chef', v.chefId && store.get('chefs', v.chefId)
+      ? h('a.link', { href: `#/chef/${v.chefId}` }, store.get('chefs', v.chefId).name)
+      : v.chef || r.chef],
     ['Menu', v.menu],
-    ['Wine', v.wine],
+    ['Wines', (v.wineIds || []).map((id) => store.get('wines', id)).filter(Boolean).length
+      ? h('span', (v.wineIds || []).map((id) => store.get('wines', id)).filter(Boolean)
+          .map((w, i) => [i ? h('br') : '', h('a.link', { href: `#/wine/${w.id}` }, w.name)]))
+      : null],
+    ['Wine notes', v.wine],
     ['With', v.companions],
     ['Remembered dish', v.memorableDish],
   ].filter(([, val]) => val);
@@ -31,7 +37,7 @@ export function renderVisit(root, id) {
 
     h('div.visit-head',
       v.stars?.kind && v.stars.kind !== 'none' ? h('div', stars(v.stars, { withLabel: true }) ) : null,
-      h('h1', r.name),
+      h('h1', h('a', { href: `#/restaurant/${r.id}`, style: { textDecoration: 'none' } }, r.name)),
       h('div.place', [r.city, r.country].filter(Boolean).join(', '), r.countryCode ? ' ' + countryFlag(r.countryCode) : ''),
       h('div.when', formatDate(v.date)),
       v.occasion && h('div.occasion', v.occasion),

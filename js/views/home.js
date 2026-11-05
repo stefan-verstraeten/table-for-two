@@ -1,5 +1,5 @@
 import * as store from '../store.js';
-import { h, photo, formatDate, stars, yearOf, icon } from '../ui.js';
+import { h, photo, formatDate, stars, yearOf, icon, STAR_SVG } from '../ui.js';
 
 function coverOf(v) {
   const ps = v.photos || [];
@@ -28,8 +28,9 @@ export function renderHome(root) {
   const page = h('div.page.flush',
     hero,
     h('div.masthead',
-      h('h1', 'Our Journey'),
-      h('div.eyebrow', 'Exceptional meals · shared memories'),
+      h('div.watermark', { html: STAR_SVG.repeat(3), 'aria-hidden': 'true' }),
+      h('h1', 'Gastronomical Memories'),
+      h('div.eyebrow', 'Simply lovely'),
       visits.length > 0 && h('div.tally',
         h('div', h('b', restIds.size), h('span', restIds.size === 1 ? 'Restaurant' : 'Restaurants')),
         h('div', h('b', michelinStars), h('span', 'Stars')),
@@ -83,6 +84,6 @@ function entry(v) {
       h('div.meta', [r.city, r.country].filter(Boolean).join(', ')),
       h('div.date', formatDate(v.date, { short: true }), stars(v.stars)),
     ),
-    cover ? h('div.thumb', photo(cover.thumb || cover.path)) : h('div.thumb.none', icon('sparkle')),
+    cover ? h('div.thumb', photo(cover.thumb || cover.path)) : h('div.thumb.none', { html: STAR_SVG }),
   );
 }
