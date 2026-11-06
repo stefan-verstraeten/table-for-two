@@ -11,8 +11,8 @@ import { db, settings } from './db.js';
 import { createClient, utf8ToBase64, blobToBase64 } from './github.js';
 
 const JOURNAL_PATH = 'journal.json';
-export const COLLECTIONS = ['restaurants', 'visits', 'chefs', 'wines', 'wishes'];
-const EMPTY = () => ({ schema: 1, restaurants: {}, visits: {}, chefs: {}, wines: {}, wishes: {} });
+export const COLLECTIONS = ['restaurants', 'visits', 'chefs', 'wines', 'wishes', 'ingredients', 'highlights'];
+const EMPTY = () => normalise({ schema: 1 });
 function normalise(j) { for (const c of COLLECTIONS) j[c] ||= {}; return j; }
 
 let journal = EMPTY();
@@ -291,7 +291,7 @@ function describeChanges(dirty, merged) {
     const [coll, id] = keys[0].split('/');
     const rec = merged[coll][id];
     const name = coll === 'visits' ? merged.restaurants[rec?.restaurantId]?.name : rec?.name;
-    const noun = { chefs: 'chef ', wines: 'wine ', wishes: 'wish list: ' }[coll] || '';
+    const noun = { chefs: 'chef ', wines: 'wine ', wishes: 'wish list: ', ingredients: 'ingredient ', highlights: 'highlight ' }[coll] || '';
     if (rec?.deleted) return `remove ${coll === 'visits' ? 'visit to ' : noun}${name || id}`;
     return `${coll === 'visits' ? 'update visit to' : 'update ' + noun}${coll === 'visits' ? ' ' : ''}${name || id}`;
   }

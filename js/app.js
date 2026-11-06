@@ -8,7 +8,10 @@ import { renderEdit } from './views/edit.js';
 import { renderMap, teardownMap } from './views/map.js';
 import { renderSettings } from './views/settings.js';
 import { registerUpdates } from './updates.js';
-import { mergeDuplicateRestaurants } from './tidy.js';
+import { mergeDuplicateRestaurants, fillCountryCodes } from './tidy.js';
+import { catalogueIngredients } from './ingredients.js';
+import { renderDishes, renderDish, renderIngredient, renderIngredientEdit } from './views/dishes.js';
+import { renderHighlights } from './views/highlights.js';
 import { renderLane, renderRestaurants, renderRestaurant, goRandom } from './views/lane.js';
 import { renderList, renderDetail, renderProfileEdit, linkChefs } from './views/profiles.js';
 import { renderWishes } from './views/wishes.js';
@@ -24,14 +27,14 @@ const tabs = h('nav.tabbar',
 );
 
 let current = '';
-const EDITORS = ['edit', 'new', 'chef-edit', 'wine-edit'];
+const EDITORS = ['edit', 'new', 'chef-edit', 'wine-edit', 'ingredient-edit'];
 
 function route() {
   const hash = location.hash || '#/';
-  const [, name = '', id] = hash.slice(1).split('/');
+  const [, name = '', id, sub] = hash.slice(1).split('/');
   if (current === 'map' && name !== 'map') teardownMap();
   current = name || 'home';
-  const LANE = ['lane', 'restaurants', 'restaurant', 'chefs', 'chef', 'wines', 'wine', 'wishes'];
+  const LANE = ['lane', 'restaurants', 'restaurant', 'chefs', 'chef', 'wines', 'wine', 'wishes', 'dishes', 'dish', 'ingredient', 'ingredient-edit', 'highlights'];
   const tab = LANE.includes(current) ? 'lane' : current;
   for (const a of tabs.querySelectorAll('a')) a.classList.toggle('active', a.dataset.tab === tab);
   tabs.style.display = EDITORS.includes(name) ? 'none' : '';
@@ -51,6 +54,11 @@ function route() {
     case 'wine': return renderDetail(view, 'wines', id);
     case 'wine-edit': return renderProfileEdit(view, 'wines', id);
     case 'wishes': return renderWishes(view);
+    case 'dishes': return renderDishes(view, id);
+    case 'dish': return renderDish(view, id, sub);
+    case 'ingredient': return renderIngredient(view, id);
+    case 'ingredient-edit': return renderIngredientEdit(view, id);
+    case 'highlights': return renderHighlights(view, id);
     case 'map': return renderMap(view);
     case 'settings': return renderSettings(view);
     default: return renderHome(view);
@@ -59,7 +67,9 @@ function route() {
 
 // Re-render read-only screens when data arrives from the other phone.
 // Never re-render the editor: that would throw away what is being typed.
+let catalogueTimer = null;
 store.subscribe((kind) => {
+  if (kind === 'data') { clearTimeout(catalogueTimer); catalogueTimer = setTimeout(() => catalogueIngredients().catch(console.error), 2500); }
   if (kind === 'status') {
     const pill = view.querySelector('.sync-pill');
     if (pill) pill.replaceWith(syncPill(store.getStatus()));
@@ -77,7 +87,7 @@ function start() {
   app.replaceChildren(view, tabs);
   window.addEventListener('hashchange', route);
   route();
-  const tidy = () => mergeDuplicateRestaurants().then(() => linkChefs()).catch(console.error);
+  const tidy = () => mergeDuplicateRestaurants().then(linkChefs).then(fillCountryCodes).then(catalogueIngredients).catch(console.error);
   store.sync().catch(console.error).finally(tidy);
   window.addEventListener('online', () => store.sync());
   document.addEventListener('visibilitychange', () => {

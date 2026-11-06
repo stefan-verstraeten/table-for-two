@@ -199,6 +199,20 @@ Finish your reply with one JSON object in a \`\`\`json block, with these string 
   return lastJSON(text);
 }
 
+// Menu ingredients (Dutch, French, …) → English: [{ id, english, note }]
+export async function translateIngredients(items) {
+  const list = items.map((it) => `- id ${it.id}: "${it.term}"${it.context ? ` — on the menu as part of “${it.context}”` : ''}`).join('\n');
+  const text = await ask({
+    effort: 'low',
+    content: `These words come from tasting menus of fine-dining restaurants (mostly in Dutch or French). Give each its usual English culinary name, in lower case unless it is a proper name (a breed, a producer, a place, a brand). Keep names that are used as-is in English (aligot, dashi, yuzu). For brands, breeds and local specialities add a short note of at most one sentence saying what it is; otherwise leave the note empty.
+
+${list}
+
+Reply with only a \`\`\`json block: {"items": [{"id": "…", "english": "…", "note": ""}]}`,
+  });
+  return lastJSON(text).items || [];
+}
+
 // A quick, cheap call to check a key works.
 export async function checkKey(key) {
   sdk ||= (await import(SDK_URL)).default;

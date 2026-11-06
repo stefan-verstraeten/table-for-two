@@ -144,6 +144,7 @@ export const icons = {
   chef: '<svg viewBox="0 0 24 24"><path d="M7 14a4 4 0 01-.6-7.9A5 5 0 0117.6 6.1 4 4 0 0117 14"/><path d="M7 13v7h10v-7M7 17h10"/></svg>',
   wine: '<svg viewBox="0 0 24 24"><path d="M8 3h8l-.4 5a3.6 3.6 0 01-7.2 0z"/><path d="M12 12v8M8.5 20.5h7"/></svg>',
   heart: '<svg viewBox="0 0 24 24"><path d="M12 20s-7-4.4-7-10a4 4 0 017-2.6A4 4 0 0119 10c0 5.6-7 10-7 10z"/></svg>',
+  star: '<svg viewBox="0 0 24 24"><path d="M12 3.5l2.6 5.6 6 .7-4.5 4.1 1.2 6-5.3-3-5.3 3 1.2-6-4.5-4.1 6-.7z"/></svg>',
   cover: '<svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="1"/><path d="M3.5 16l5-5 4 4 3-3 5 5"/></svg>',
 };
 

@@ -1,5 +1,6 @@
 import * as store from '../store.js';
 import { h, formatDate, countryFlag, STAR_SVG } from '../ui.js';
+import { countryCode } from '../countries.js';
 
 let map = null;
 const CONTINENT_ZOOM = 4;
@@ -34,8 +35,10 @@ export function renderMap(root) {
   const countries = new Map();
   for (const e of shown) {
     const key = e.r.country || 'Unknown';
-    if (!countries.has(key)) countries.set(key, { code: e.r.countryCode, items: [] });
-    countries.get(key).items.push(e);
+    if (!countries.has(key)) countries.set(key, { code: '', items: [] });
+    const c = countries.get(key);
+    c.items.push(e);
+    c.code ||= e.r.countryCode || countryCode(key);
   }
 
   const mapEl = h('div#map');

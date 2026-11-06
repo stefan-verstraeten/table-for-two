@@ -2,6 +2,9 @@ import * as store from '../store.js';
 import { h, icon, photo, stars, formatDate, countryFlag, STAR_SVG } from '../ui.js';
 import { coverOf } from './home.js';
 import { needsMyApproval } from './profiles.js';
+import { PEOPLE } from '../config.js';
+import { allCourses } from '../ingredients.js';
+import { highlightsOf } from './highlights.js';
 
 export function renderLane(root) {
   const visits = store.visits();
@@ -27,10 +30,17 @@ export function renderLane(root) {
       h('span.eyebrow', 'Surprise us'),
       h('span.serif', 'A random memory'),
       icon('sparkle')),
+    h('div.eyebrow.lane-sub', 'Highlights'),
+    h('nav.lane-list.hl-lanes', PEOPLE.map((p) => {
+      const n = highlightsOf(p).length;
+      return card(`#/highlights/${encodeURIComponent(p)}`, `${p}’s highlights`, n, n ? 'The extra special ones' : 'Nothing highlighted yet', 'star');
+    })),
+    h('div.eyebrow.lane-sub', 'The archive'),
     h('nav.lane-list',
       card('#/restaurants', 'Restaurants A–Z', restaurants.size, 'Every table, alphabetically', 'journal'),
       card('#/chefs', 'Chefs', chefs.length, pendingChefs ? `${pendingChefs} bio${pendingChefs > 1 ? 's' : ''} waiting for you` : 'Who cooked for us', 'chef'),
       card('#/wines', 'Wines', wines.length, pendingWines ? `${pendingWines} profile${pendingWines > 1 ? 's' : ''} waiting for you` : 'What we drank', 'wine'),
+      card('#/dishes', 'Dishes', allCourses().length, 'Every course, every ingredient', 'menu'),
       card('#/wishes', 'Wish list', wishes.length, 'Tables still to come', 'heart'),
       card('#/map', 'The map', countries(), 'Our gastronomic journey', 'map'),
     ),
@@ -48,7 +58,7 @@ export function goRandom() {
   location.replace(`#/visit/${v.id}`);
 }
 
-const ARTICLES = /^(le|la|les|l'|de|het|'t|t'|il|el|the)\s*/i;
+const ARTICLES = /^((le|la|les|de|het|il|el|the)\s+|l['’]\s*|['’]t\s+|t['’]\s*)/i;
 export const sortName = (n) => (n || '').replace(ARTICLES, '').trim();
 
 export function renderRestaurants(root) {

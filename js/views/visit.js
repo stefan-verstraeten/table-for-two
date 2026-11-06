@@ -2,6 +2,27 @@ import * as store from '../store.js';
 import { h, photo, formatDate, stars, icon, ratingLabel, countryFlag, toast } from '../ui.js';
 import { PEOPLE } from '../config.js';
 import { coverOf } from './home.js';
+import { highlightCard, editHighlight } from './highlights.js';
+import { countryCode } from '../countries.js';
+
+const ordinal = (n) => n + (n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] || 'th');
+
+function ago(v) {
+  const d = v.date || {};
+  if (!d.y || d.precision === 'unknown') return '';
+  const then = new Date(d.y, (d.m || 6) - 1, d.d || 15);
+  const months = Math.round((Date.now() - then) / (30.44 * 864e5));
+  if (months < 0) return '';
+  if (d.precision === 'day' && months < 1) { const days = Math.round((Date.now() - then) / 864e5); return days <= 0 ? 'today' : days === 1 ? 'yesterday' : `${days} days ago`; }
+  if (months < 12) return months <= 1 ? 'a month ago' : `${months} months ago`;
+  const y = Math.round(months / 12);
+  return y === 1 ? 'a year ago' : `${d.precision === 'circa' ? 'about ' : ''}${y} years ago`;
+}
+
+function mapsLink(r) {
+  const q = encodeURIComponent([r.name, r.address || [r.city, r.country].filter(Boolean).join(', ')].filter(Boolean).join(', '));
+  return r.lat != null ? `https://maps.apple.com/?q=${encodeURIComponent(r.name)}&ll=${r.lat},${r.lon}` : `https://maps.apple.com/?q=${q}`;
+}
 
 export function renderVisit(root, id) {
   const v = store.visit(id);
@@ -15,11 +36,10 @@ export function renderVisit(root, id) {
   // The evening's photos, main photo first, for the swipeable header.
   const slides = photos.includes(cover) ? [cover, ...photos.filter((p) => p !== cover)] : photos;
 
+  const chef = v.chefId && store.get('chefs', v.chefId);
   const facts = [
     ['Meal', v.meal && v.meal[0].toUpperCase() + v.meal.slice(1)],
-    ['Chef', v.chefId && store.get('chefs', v.chefId)
-      ? h('a.link', { href: `#/chef/${v.chefId}` }, store.get('chefs', v.chefId).name)
-      : v.chef || r.chef],
+    ['Chef', !chef && (v.chef || r.chef)],
     ['Menu', v.menu],
     ['Wine notes', v.wine],
     ['With', v.companions],
@@ -28,7 +48,15 @@ export function renderVisit(root, id) {
 
   const today = r.currentStars;
   const showToday = v.stars?.kind === 'michelin' && today != null && today !== v.stars.count;
-  const others = store.visitsOf(r.id).filter((o) => o.id !== v.id);
+  const here = store.visitsOf(r.id);
+  const others = here.filter((o) => o.id !== v.id);
+  const nth = [...here].reverse().indexOf(v) + 1;
+  const highlights = store.list('highlights').filter((x) => x.visitId === v.id)
+    .sort((a, b) => (a.kind === 'moment') - (b.kind === 'moment') || (a.course ?? 99) - (b.course ?? 99));
+  const counts = [v.courses?.length && `${v.courses.length} course${v.courses.length > 1 ? 's' : ''}`,
+    wines.length && `${wines.length} wine${wines.length > 1 ? 's' : ''}`,
+    photos.length && `${photos.length} photo${photos.length > 1 ? 's' : ''}`].filter(Boolean);
+  const hlOf = (kind, key) => highlights.some((x) => x.kind === kind && (kind === 'dish' ? x.course === key : x.wineId === key));
 
   const page = h('div.page.flush',
     h('a.float-btn.left', { href: '#/', 'aria-label': 'Back' }, icon('back')),
@@ -38,8 +66,9 @@ export function renderVisit(root, id) {
     h('div.visit-head',
       v.stars?.kind && v.stars.kind !== 'none' ? h('div', stars(v.stars, { withLabel: true }) ) : null,
       h('h1', h('a', { href: `#/restaurant/${r.id}`, style: { textDecoration: 'none' } }, r.name)),
-      h('div.place', [r.city, r.country].filter(Boolean).join(', '), r.countryCode ? ' ' + countryFlag(r.countryCode) : ''),
-      h('div.when', formatDate(v.date)),
+      h('div.place', [r.city, r.country].filter(Boolean).join(', '), (r.countryCode || countryCode(r.country)) ? ' ' + countryFlag(r.countryCode || countryCode(r.country)) : ''),
+      h('div.when', formatDate(v.date), ago(v) && h('span.ago', ` · ${ago(v)}`)),
+      here.length > 1 && h('div.nth', `Our ${ordinal(nth)} of ${here.length} evenings here`),
       v.occasion && h('div.occasion', v.occasion),
       showToday && h('div.now-stars', today === 0 ? 'No longer starred today' : `Today: ${today} Michelin star${today > 1 ? 's' : ''}`),
     ),
@@ -57,7 +86,16 @@ export function renderVisit(root, id) {
         h(`div.verdict${v.ratings?.[p] ? '' : '.none'}`, ratingLabel(v.ratings?.[p]) || '—'),
       ))),
 
+      counts.length > 0 && h('div.visit-counts', counts.join(' · ')),
+
       facts.length > 0 && h('dl.facts', facts.map(([k, val]) => h('div', h('dt', k), h('dd', val)))),
+
+      h('div.menu-souvenir',
+        h('h3.section-title', 'Highlights of the evening'),
+        highlights.length > 0 && h('div.hl-list', highlights.map((x) => highlightCard(x, { onVisit: true }))),
+        h('div.hl-actions',
+          h('button.btn.small.ghost', { onclick: () => editHighlight({ kind: 'moment', visitId: v.id }) }, h('span.hl-star', '★'), 'Highlight a moment'),
+          v.courses?.length > 0 && h('span.hint', 'or tap a dish or a wine below'))),
 
 
       !(v.courses?.length) && !wines.length && (v.photos || []).length > 0 && h('a.btn.small.ghost.find-meal', { href: `#/edit/${v.id}?scan` },
@@ -65,15 +103,19 @@ export function renderVisit(root, id) {
 
       (menus.length > 0 || v.courses?.length > 0) && h('div.menu-souvenir',
         h('h3.section-title', 'The menu'),
-        v.courses?.length > 0 && h('ol.menu-card', v.courses.map((c) => h('li', h('span.dish', c.dish), c.detail && h('span.detail', c.detail)))),
+        v.courses?.length > 0 && h('ol.menu-card', v.courses.map((c, i) => h('li', h('a', { href: `#/dish/${v.id}/${i}` },
+          h('span.dish', c.dish, hlOf('dish', i) && h('span.hl-mark', ' ★')), c.detail && h('span.detail', c.detail))))),
         menus.length > 0 && h('div.souvenir-thumbs', menus.map((p, i) => h('button', { onclick: () => lightbox(menus, i, v) }, photo(p.thumb || p.path))))),
 
       (wines.length > 0 || wineLists.length > 0) && h('div.menu-souvenir',
         h('h3.section-title', 'In our glasses'),
         wines.length > 0 && h('ol.menu-card.wines', wines.map((w) => h('li', h('a', { href: `#/wine/${w.id}` },
-          h('span.dish', [w.name, w.vintage].filter(Boolean).join(' ')),
-          h('span.detail', [w.producer, w.grapes, w.region].filter(Boolean).join(' · ')))))),
+          h('span.dish', [w.name, w.vintage].filter(Boolean).join(' '), hlOf('wine', w.id) && h('span.hl-mark', ' ★')),
+          h('span.detail', [w.style, w.producer, w.grapes, w.region].filter(Boolean).join(' · ')))))),
         wineLists.length > 0 && h('div.souvenir-thumbs', wineLists.map((p, i) => h('button', { onclick: () => lightbox(wineLists, i, v) }, photo(p.thumb || p.path))))),
+
+      chefSection(v, r, chef),
+      restaurantSection(r, v, here),
 
       others.length > 0 && h('div.other-visits',
         h('h3.section-title', `Other evenings at ${r.name}`),
@@ -144,4 +186,38 @@ function lightbox(list, start, v) {
   const place = () => { track.scrollLeft = start * track.clientWidth; update(); };
   place();
   requestAnimationFrame(place);
+}
+
+function chefSection(v, r, chef) {
+  if (!chef) return null;
+  const first = (chef.text || '').split(/\n{2,}/)[0];
+  const line = [chef.born && `Born ${chef.born}`, chef.awards && chef.awards.split('\n')[0]].filter(Boolean);
+  return h('div.menu-souvenir',
+    h('h3.section-title', 'In the kitchen'),
+    h('a.chef-card', { href: `#/chef/${chef.id}` },
+      chef.image ? h('span.chef-pic', h('img', { src: chef.image, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' }))
+        : h('span.chef-pic.none', (chef.name || '?').split(/\s+/).map((w) => w[0]).slice(0, 2).join('')),
+      h('span.chef-text',
+        h('b.serif', chef.name),
+        line.map((l) => h('small', l)),
+        first ? h('span.chef-bio', first.length > 280 ? first.slice(0, 270).replace(/\s+\S*$/, '') + '…' : first)
+          : h('span.chef-bio.muted', 'No bio yet — tap to look it up.'),
+        h('span.link', 'The full bio ›'))));
+}
+
+function restaurantSection(r, v, here) {
+  const best = Math.max(0, ...here.filter((x) => x.stars?.kind === 'michelin').map((x) => x.stars.count || 0));
+  const rows = [
+    ['Address', r.address || [r.city, r.country].filter(Boolean).join(', ')],
+    ['Michelin', [v.stars?.kind === 'michelin' && v.stars.count ? `${v.stars.count} star${v.stars.count > 1 ? 's' : ''} that evening` : null,
+      r.currentStars != null ? (r.currentStars ? `${r.currentStars} today` : 'not starred today') : null,
+      here.length > 1 && best && best !== v.stars?.count ? `${best} at best in our visits` : null].filter(Boolean).join(' · ')],
+    ['Our visits', here.length > 1 ? `${here.length} evenings, ${formatDate(here[here.length - 1].date, { short: true })} – ${formatDate(here[0].date, { short: true })}` : 'Just this one, so far'],
+  ].filter(([, val]) => val);
+  return h('div.menu-souvenir',
+    h('h3.section-title', 'The restaurant'),
+    h('dl.facts', rows.map(([k, val]) => h('div', h('dt', k), h('dd', val)))),
+    h('div.hl-actions',
+      h('a.btn.small.ghost', { href: mapsLink(r), target: '_blank', rel: 'noopener' }, icon('pin'), 'Open in Maps'),
+      h('a.btn.small.ghost', { href: `#/restaurant/${r.id}` }, 'All our evenings here')));
 }

@@ -3,11 +3,13 @@
 // either of us, and only "agreed" once both have accepted the content.
 
 import * as store from '../store.js';
-import { h, icon, toast, sheet, confirmSheet, formatDate, stars, photo } from '../ui.js';
+import { h, icon, toast, sheet, confirmSheet, formatDate, stars, photo, countryFlag } from '../ui.js';
+import { countryCode } from '../countries.js';
 import { PEOPLE } from '../config.js';
 import * as wiki from '../wiki.js';
 import * as claude from '../claude.js';
 import { backBar, sortName } from './lane.js';
+import { highlightButton } from './highlights.js';
 
 export const WINE_STYLES = ['Red', 'White', 'Rosé', 'Sparkling', 'Sweet', 'Fortified', 'Orange'];
 
@@ -72,16 +74,31 @@ export function renderList(root, kindKey) {
   root.replaceChildren(h('div.page',
     backBar('#/lane', 'Memory lane'),
     h('h1.page-title', K.title),
-    items.length ? h('div', items.map((x) => {
-      const st = approvalState(x);
-      return h('a.az-row', { href: `#/${K.route}/${x.id}` },
-        h('span', h('b.serif', x.name), h('small', K.subtitle(x) || '—')),
-        h(`span.badge-state.${st.cls}`, st.cls === 'agreed' ? '✓' : needsMyApproval(x) ? 'Your turn' : st.cls === 'draft' ? 'Draft' : 'To write'));
-    })) : h('p.muted', kindKey === 'chefs'
+    items.length ? groupItems(kindKey, items).map(([head, list]) => h('section.az-group',
+      head && h('div.year-head', h('h2', head)),
+      list.map((x) => {
+        const st = approvalState(x);
+        return h('a.az-row', { href: `#/${K.route}/${x.id}` },
+          h('span', h('b.serif', x.name), h('small', K.subtitle(x) || '—')),
+          h(`span.badge-state.${st.cls}`, st.cls === 'agreed' ? '✓' : needsMyApproval(x) ? 'Your turn' : st.cls === 'draft' ? 'Draft' : 'To write'));
+      }))) : h('p.muted', kindKey === 'chefs'
       ? 'Chefs appear here when you fill in “Chef” on a visit. You can also add one yourself.'
       : 'Wines appear here when you add them to a visit. You can also add one yourself.'),
     h('a.btn.ghost.block', { href: `#/${K.route}-edit/new`, style: { marginTop: '24px' } }, icon('plus'), `Add a ${K.one}`),
   ));
+}
+
+// Wines under a heading per country (A–Z, unknown last); chefs as one list.
+function groupItems(kindKey, items) {
+  if (kindKey !== 'wines') return [[null, items]];
+  const groups = new Map();
+  for (const x of items) {
+    const c = (x.country || '').trim() || 'Country unknown';
+    if (!groups.has(c)) groups.set(c, []);
+    groups.get(c).push(x);
+  }
+  return [...groups].map(([c, list]) => [`${countryFlag(countryCode(c))} ${c}`.trim(), list])
+    .sort((a, b) => (a[0].endsWith('unknown') - b[0].endsWith('unknown')) || a[0].replace(/^\S+\s/, '').localeCompare(b[0].replace(/^\S+\s/, '')));
 }
 
 const hostOf = (u) => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return u; } };
@@ -128,7 +145,7 @@ export function renderDetail(root, kindKey, id) {
       : h('div', { style: { textAlign: 'center' } },
           h('p.muted', { style: { fontFamily: 'var(--serif)', fontStyle: 'italic', fontSize: '19px' } },
             `A placeholder for now — the ${K.textLabel.toLowerCase()} is still to be written.`),
-          h('a.btn.small.ghost', { href: `#/${K.route}-edit/${id}?research` }, icon('sparkle'), claude.hasKey() ? 'Research it on the web' : 'Look it up')),
+          h('a.btn.small.ghost', { href: `#/${K.route}-edit/${id}?research` }, 'Look it up on Wikipedia')),
     sourceLine(x),
 
     !empty && h(`div.approval.${st.cls}`,
@@ -138,6 +155,8 @@ export function renderDetail(root, kindKey, id) {
         toast('Accepted');
       } }, 'Accept'),
     ),
+
+    kindKey === 'wines' && visits.length > 0 && highlightButton({ kind: 'wine', wineId: id, visitId: visits[0].id, title: x.name }),
 
     visits.length > 0 && h('div.other-visits',
       h('h3.section-title', kindKey === 'chefs' ? 'Cooked for us' : 'We drank it at'),
@@ -282,7 +301,9 @@ export function renderProfileEdit(root, kindKey, rawId) {
             toast(r.lang === 'en' ? 'Draft filled in — edit as you like' : `Filled in from the ${r.lang === 'fr' ? 'French' : 'Dutch'} Wikipedia — edit as you like`);
           } catch { body.replaceChildren(h('p.muted', 'Could not fetch the article.')); }
         } }, h('span', r.title, h('small', { style: { display: 'block' } }, r.snippet.slice(0, 140) + '…')), h('small', r.lang.toUpperCase())))) : h('p.muted', 'Nothing on Wikipedia. You can write it yourselves.'),
-        !claude.hasKey() && h('p.hint', 'Tip: add a Claude key under You to research the whole web instead — much richer, especially for chefs without a Wikipedia page.'),
+        claude.hasKey()
+          ? h('button.btn.ghost.block', { style: { marginTop: '12px' }, onclick: () => { s.close(); research(); } }, icon('sparkle'), results.length ? 'None of these — research with Claude' : 'Research with Claude instead')
+          : h('p.hint', 'Tip: add a Claude key under You to research the whole web instead — much richer, especially for chefs without a Wikipedia page.'),
       );
     } catch { body.replaceChildren(h('p.muted', 'Wikipedia is not reachable right now.')); }
   }
@@ -319,8 +340,8 @@ export function renderProfileEdit(root, kindKey, rawId) {
       h('button.text-btn', { type: 'button', onclick: save }, 'Save')),
     h('div.field', h('label', 'Name'), nameIn),
     h('div.research-bar',
-      claude.hasKey() && h('button.btn.small.accent', { type: 'button', onclick: research }, icon('sparkle'), 'Research on the web'),
-      h('button.btn.small.ghost', { type: 'button', onclick: lookUp }, 'Find on Wikipedia')),
+      h('button.btn.small.accent', { type: 'button', onclick: lookUp }, 'Find on Wikipedia'),
+      claude.hasKey() && h('button.btn.small.ghost', { type: 'button', onclick: research }, icon('sparkle'), 'Research with Claude')),
     styleBox,
     fieldEls,
     kindKey === 'chefs' && h('div.field.sources-box',
@@ -341,7 +362,7 @@ export function renderProfileEdit(root, kindKey, rawId) {
     !isNew && h('button.btn.ghost.block', { type: 'button', style: { marginTop: '10px', color: 'var(--burgundy)' }, onclick: del }, `Remove this ${K.one}`),
   ));
   window.scrollTo(0, 0);
-  if (query === 'research') setTimeout(() => (claude.hasKey() ? research() : lookUp()), 50);
+  if (query === 'research') setTimeout(lookUp, 50);
 }
 
 // Find a chef/wine by name, or create it (a placeholder page). Used by the visit editor.

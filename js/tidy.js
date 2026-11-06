@@ -4,6 +4,7 @@
 
 import * as store from './store.js';
 import { distanceKm } from './places.js';
+import { countryCode } from './countries.js';
 
 export const normName = (s) => (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '')
   .toLowerCase().replace(/^(restaurant|ristorante|chez)\s+/, '').replace(/[^a-z0-9]+/g, ' ').trim();
@@ -40,4 +41,14 @@ export async function mergeDuplicateRestaurants() {
     }
   }
   return gone.size;
+}
+
+// Restaurants saved without a country code (typed by hand) get one from the name.
+export async function fillCountryCodes() {
+  for (const r of store.restaurants()) {
+    if (r.country && !r.countryCode) {
+      const code = countryCode(r.country);
+      if (code) await store.save('restaurants', r.id, { countryCode: code });
+    }
+  }
 }
