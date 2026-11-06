@@ -7,10 +7,16 @@ import { ensureByName, WINE_STYLES } from './profiles.js';
 import * as claude from '../claude.js';
 import { findExisting } from '../tidy.js';
 
-const VISIT_FIELDS = ['restaurantId', 'date', 'meal', 'occasion', 'stars', 'chef', 'chefId', 'menu', 'wine', 'wineIds',
+const VISIT_FIELDS = ['restaurantId', 'date', 'meal', 'occasion', 'stars', 'gaultMillau', 'chef', 'chefId', 'menu', 'wine', 'wineIds',
   'companions', 'memorableDish', 'memories', 'memoriesBy', 'photos', 'coverPhotoId', 'courses'];
 const REST_FIELDS = ['name', 'city', 'country', 'countryCode', 'lat', 'lon', 'currentStars', 'address'];
 const PHOTO_KINDS = { photo: 'Photo', menu: 'Menu', winelist: 'Wine list', bottle: 'Wine' };
+
+// "16,5" or "16.5/20" → 16.5; anything else → undefined.
+export function parseGM(text) {
+  const n = parseFloat(String(text || '').replace(',', '.'));
+  return Number.isFinite(n) && n > 0 && n <= 20 ? Math.round(n * 2) / 2 : undefined;
+}
 
 // "10.30, -84.81", 10°18'05"N 84°48'30"W, or a Google / Apple Maps link.
 export function parseCoords(text) {
@@ -789,6 +795,9 @@ export function renderEdit(root, rawId, prefill = '') {
     field('Occasion', input(v.occasion, (val) => { v.occasion = val; }, { placeholder: 'Anniversary, a birthday, just because…' })),
     field('Stars at the time', starsBox),
     starsTodayBox,
+    field('Gault&Millau at the time', input(v.gaultMillau, (val) => { v.gaultMillau = parseGM(val); },
+      { inputmode: 'decimal', placeholder: 'Score out of 20, e.g. 16.5', style: { maxWidth: '220px' } }),
+      'Leave empty if you don’t know.'),
 
     h('h3.section-title', 'The table'),
     h('div.field', { style: { position: 'relative' } }, h('label', 'Chef'), chefInput, chefAc),

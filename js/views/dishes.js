@@ -11,6 +11,7 @@ import {
   catalogueIngredients, renameTerm, splitTerm, unsplit, setHidden, splitRules, translate, suggestCuts,
 } from '../ingredients.js';
 import { highlightButton } from './highlights.js';
+import { azList } from './azlist.js';
 
 let tab = 'dishes';
 
@@ -58,11 +59,15 @@ export function renderDishes(root, which) {
     const groups = azGroups(courses, (x) => x.c.dish);
     body = [
       h('p.hint', { style: { marginTop: 0 } }, 'Tap a dish, then “Fix this dish” to correct its name, details or ingredients.'),
-      [...groups].map(([k, list]) => h('section.az-group',
-        h('div.year-head', h('h2', k)),
-        list.map(({ v, c, i }) => h('a.az-row', { href: `#/dish/${v.id}/${i}` },
-          h('span', h('b.serif', nice(c.dish)), h('small', [c.detail, whereWhen(v)].filter(Boolean).join(' — '))),
-          highlightedBadge(v.id, i))))),
+      azList('dishes', [...groups].map(([k, list]) => ({
+        id: k, jump: k, head: h('div.year-head', h('h2', k)),
+        rows: list.map(({ v, c, i }) => ({
+          text: [c.dish, c.detail, whereWhen(v), ...ingredientsOfCourse(c, idx).map((x) => x.name)].join(' '),
+          el: h('a.az-row', { href: `#/dish/${v.id}/${i}` },
+            h('span', h('b.serif', nice(c.dish)), h('small', [c.detail, whereWhen(v)].filter(Boolean).join(' — '))),
+            highlightedBadge(v.id, i)),
+        })),
+      })), { placeholder: 'Find a dish, ingredient or restaurant' }),
     ];
   } else {
     const groups = azGroups(ingredients, displayName);
@@ -72,11 +77,18 @@ export function renderDishes(root, which) {
         h('div.hl-actions', { style: { marginTop: 0 } },
           h('a.btn.small.accent', { href: '#/ingredient-review' }, 'Go through them'),
           claude.hasKey() && h('button.btn.small.ghost', { onclick: () => translateWithClaude(check) }, icon('sparkle'), 'Translate with Claude'))),
-      [...groups].map(([k, list]) => h('section.az-group',
-        h('div.year-head', h('h2', k)),
-        list.map((ing) => h('a.az-row', { href: `#/ingredient/${ing.id}` },
-          h('span', h('b.serif', displayName(ing)), h('small', originals(ing).join(', ') || '—')),
-          h('span.az-meta', ing.untranslated && h('span.badge-state.draft', 'Check'), h('small', `${counts.get(ing.id)} dish${counts.get(ing.id) > 1 ? 'es' : ''}`)))))),
+      azList('ingredients', [...groups].map(([k, list]) => ({
+        id: k, jump: k, head: h('div.year-head', h('h2', k)),
+        rows: list.map((ing) => {
+          const orig = originals(ing);
+          return {
+            text: [ing.name, ...orig].join(' '),
+            el: h('a.az-row', { href: `#/ingredient/${ing.id}` },
+              h('span', h('b.serif', displayName(ing)), h('small', orig.join(', ') || '—')),
+              h('span.az-meta', ing.untranslated && h('span.badge-state.draft', 'Check'), h('small', `${counts.get(ing.id)} dish${counts.get(ing.id) > 1 ? 'es' : ''}`))),
+          };
+        }),
+      })), { placeholder: 'Find an ingredient (English or as on the menu)' }),
       (hidden.length > 0 || rules.length > 0) && h('details.tidy-box',
         h('summary', 'Hidden and split'),
         hidden.length > 0 && h('div',

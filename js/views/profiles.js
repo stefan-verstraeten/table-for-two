@@ -1,15 +1,15 @@
 // Chefs and wines: one-page profiles drafted from public sources (Claude web
-// research when a key is set, otherwise Wikipedia + Wikidata), edited by
-// either of us, and only "agreed" once both have accepted the content.
+// research or Wikipedia + Wikidata, in any language, written up in English or
+// Dutch). Either of us can edit them; what is saved is final.
 
 import * as store from '../store.js';
 import { h, icon, toast, sheet, confirmSheet, formatDate, stars, photo, countryFlag } from '../ui.js';
 import { countryCode } from '../countries.js';
-import { PEOPLE } from '../config.js';
 import * as wiki from '../wiki.js';
 import * as claude from '../claude.js';
 import { backBar, sortName } from './lane.js';
 import { highlightButton } from './highlights.js';
+import { azList } from './azlist.js';
 
 export const WINE_STYLES = ['Red', 'White', 'Rosé', 'Sparkling', 'Sweet', 'Fortified', 'Orange'];
 
@@ -51,21 +51,8 @@ function restaurantsOfChef(chefId) {
   return [...ids].map((id) => store.restaurant(id)).filter(Boolean);
 }
 
-// A wine with only label facts (from a wine list) is still a placeholder;
-// a chef with researched facts is a draft to agree on.
+// A wine with only label facts (from a wine list) is still a placeholder.
 const hasContent = (x) => !!x.text || CHEF_KEYS.some((k) => x[k]);
-
-export function needsMyApproval(x) {
-  return hasContent(x) && !x.approvals?.[store.me()];
-}
-
-function approvalState(x) {
-  if (!hasContent(x)) return { cls: 'empty', label: 'Placeholder — no profile yet' };
-  const yes = PEOPLE.filter((p) => x.approvals?.[p]);
-  if (yes.length === PEOPLE.length) return { cls: 'agreed', label: `Agreed by ${PEOPLE.join(' & ')}` };
-  const waiting = PEOPLE.filter((p) => !x.approvals?.[p]);
-  return { cls: 'draft', label: `Draft${x.textBy ? ` by ${x.textBy}` : ''} · waiting for ${waiting.join(' & ')}` };
-}
 
 // ---------- list ----------
 export function renderList(root, kindKey) {
@@ -74,14 +61,15 @@ export function renderList(root, kindKey) {
   root.replaceChildren(h('div.page',
     backBar('#/lane', 'Memory lane'),
     h('h1.page-title', K.title),
-    items.length ? groupItems(kindKey, items).map(([head, list]) => h('section.az-group',
-      head && h('div.year-head', h('h2', head)),
-      list.map((x) => {
-        const st = approvalState(x);
-        return h('a.az-row', { href: `#/${K.route}/${x.id}` },
+    items.length ? azList(kindKey, groupItems(kindKey, items).map(([head, list, jump], gi) => ({
+      id: String(gi), jump: jump || head, head: head && h('div.year-head', h('h2', head)),
+      rows: list.map((x) => ({
+        text: [x.name, x.producer, x.region, x.country, x.grapes, x.vintage, x.style, K.subtitle(x)].filter(Boolean).join(' '),
+        el: h('a.az-row', { href: `#/${K.route}/${x.id}` },
           h('span', h('b.serif', x.name), h('small', K.subtitle(x) || '—')),
-          h(`span.badge-state.${st.cls}`, st.cls === 'agreed' ? '✓' : needsMyApproval(x) ? 'Your turn' : st.cls === 'draft' ? 'Draft' : 'To write'));
-      }))) : h('p.muted', kindKey === 'chefs'
+          !hasContent(x) && h('span.badge-state.empty', 'To write')),
+      })),
+    })), { placeholder: kindKey === 'wines' ? 'Find a wine, producer, grape, region…' : 'Find a chef or restaurant' }) : h('p.muted', kindKey === 'chefs'
       ? 'Chefs appear here when you fill in “Chef” on a visit. You can also add one yourself.'
       : 'Wines appear here when you add them to a visit. You can also add one yourself.'),
     h('a.btn.ghost.block', { href: `#/${K.route}-edit/new`, style: { marginTop: '24px' } }, icon('plus'), `Add a ${K.one}`),
@@ -90,14 +78,18 @@ export function renderList(root, kindKey) {
 
 // Wines under a heading per country (A–Z, unknown last); chefs as one list.
 function groupItems(kindKey, items) {
-  if (kindKey !== 'wines') return [[null, items]];
+  if (kindKey !== 'wines') {
+    const groups = new Map();
+    for (const x of items) { const l = sortName(x.name).normalize('NFD')[0]?.toUpperCase() || '#'; const k = /[A-Z]/.test(l) ? l : '#'; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(x); }
+    return [...groups].map(([k, list]) => [k, list, k]);
+  }
   const groups = new Map();
   for (const x of items) {
     const c = (x.country || '').trim() || 'Country unknown';
     if (!groups.has(c)) groups.set(c, []);
     groups.get(c).push(x);
   }
-  return [...groups].map(([c, list]) => [`${countryFlag(countryCode(c))} ${c}`.trim(), list])
+  return [...groups].map(([c, list]) => [`${countryFlag(countryCode(c))} ${c}`.trim(), list, countryFlag(countryCode(c)) || c.slice(0, 3)])
     .sort((a, b) => (a[0].endsWith('unknown') - b[0].endsWith('unknown')) || a[0].replace(/^\S+\s/, '').localeCompare(b[0].replace(/^\S+\s/, '')));
 }
 
@@ -111,7 +103,7 @@ function sourceLine(x) {
       urls.length ? [': ', urls.map((u, i) => [i ? ', ' : '', h('a', { href: u, target: '_blank', rel: 'noopener' }, hostOf(u))])] : '',
       x.edited ? ' · edited by us' : '');
   }
-  return h('p.byline', 'Based on ', h('a', { href: x.source.url, target: '_blank', rel: 'noopener' }, `${x.source.title} — Wikipedia (${x.source.lang})`), x.edited ? ', edited by us' : '');
+  return h('p.byline', 'Based on ', h('a', { href: x.source.url, target: '_blank', rel: 'noopener' }, `${x.source.title} — Wikipedia (${x.source.lang})`), x.source.translated ? ', translated' : '', x.edited ? ', edited by us' : '');
 }
 
 // ---------- detail ----------
@@ -119,8 +111,6 @@ export function renderDetail(root, kindKey, id) {
   const K = KINDS[kindKey];
   const x = store.get(K.coll, id);
   if (!x) { root.replaceChildren(h('div.page', backBar(`#/${K.coll}`, K.title), h('p.muted', 'Not found.'))); return; }
-  const me = store.me();
-  const st = approvalState(x);
   const visits = K.visits(id);
   const facts = K.fields.map((f) => [f.label, x[f.key]]).filter(([, v]) => v);
   if (x.style) facts.unshift(['Style', x.style]);
@@ -148,13 +138,7 @@ export function renderDetail(root, kindKey, id) {
           h('a.btn.small.ghost', { href: `#/${K.route}-edit/${id}?research` }, 'Look it up on Wikipedia')),
     sourceLine(x),
 
-    !empty && h(`div.approval.${st.cls}`,
-      h('div', h('div.eyebrow', 'Status'), h('div', st.label)),
-      needsMyApproval(x) && h('button.btn.small.accent', { onclick: async () => {
-        await store.save(K.coll, id, { [`approvals.${me}`]: true });
-        toast('Accepted');
-      } }, 'Accept'),
-    ),
+    !empty && x.textBy && h('p.byline', `Written up by ${x.textBy}`),
 
     kindKey === 'wines' && visits.length > 0 && highlightButton({ kind: 'wine', wineId: id, visitId: visits[0].id, title: x.name }),
 
@@ -197,7 +181,7 @@ export function renderProfileEdit(root, kindKey, rawId) {
   const renderSource = () => {
     sourceNote.textContent = !x.source ? ''
       : x.source.kind === 'web' ? `Researched on the web (${(x.source.urls || []).map(hostOf).join(', ') || 'no sources listed'}). Check and edit freely.`
-      : `Source: ${x.source.title} (Wikipedia ${x.source.lang}). Edit freely.`;
+      : `Source: ${x.source.title} (Wikipedia ${x.source.lang}${x.source.translated ? ', translated' : ''}). Edit freely.`;
   };
   const anyContent = () => !!x.text || CHEF_KEYS.some((k) => x[k]);
   const linksIn = h('textarea.textarea.short', {
@@ -266,7 +250,7 @@ export function renderProfileEdit(root, kindKey, rawId) {
       }
       x.edited = false;
       renderSource(); s.close();
-      toast('Draft filled in — check it, then save');
+      toast('Filled in — check it, then save');
     } catch (e) {
       console.error(e);
       body.replaceChildren(h('h3.serif', 'That didn’t work'), h('p.muted', e.message || 'Claude is not reachable right now.'),
@@ -291,14 +275,26 @@ export function renderProfileEdit(root, kindKey, rawId) {
         results.length ? h('div.place-list', results.map((r) => h('button', { onclick: async () => {
           body.replaceChildren(h('p.muted', 'Fetching the article…'));
           try {
-            const [a, f] = await Promise.all([wiki.article(r.lang, r.title), kindKey === 'chefs' ? wiki.facts(r.lang, r.title).catch(() => ({})) : {}]);
+            // The same article in English or Dutch if Wikipedia has it; otherwise translate.
+            const own = await wiki.inOwnLanguage(r.lang, r.title);
+            const src = own || r;
+            const [a, f] = await Promise.all([wiki.article(src.lang, src.title), kindKey === 'chefs' ? wiki.facts(src.lang, src.title).catch(() => ({})) : {}]);
+            let translated = false;
+            if (!wiki.OWN_LANGS.includes(src.lang) && claude.hasKey()) {
+              body.replaceChildren(h('div.research-wait', h('div.spinner'), h('p.muted', `Translating from ${wiki.LANG_NAMES[src.lang] || src.lang} into English…`)));
+              try { a.text = await claude.translateText(a.text, wiki.LANG_NAMES[src.lang]); translated = true; } catch (e) { console.error(e); }
+            }
             if (x.text && !(await confirmSheet('Replace the current text?', 'The text you have now will be replaced by the Wikipedia version.', 'Replace'))) { s.close(); return; }
             x.text = a.text; text.value = a.text; x.edited = false;
             for (const [k, v] of Object.entries(f)) if (v && !x[k]) setField(k, v);
-            x.source = a.source;
+            x.source = { ...a.source, ...(translated ? { translated: true } : {}) };
             if (a.image) x.image = a.image;
             renderSource(); s.close();
-            toast(r.lang === 'en' ? 'Draft filled in — edit as you like' : `Filled in from the ${r.lang === 'fr' ? 'French' : 'Dutch'} Wikipedia — edit as you like`);
+            const lname = wiki.LANG_NAMES[src.lang] || src.lang;
+            toast(src.lang === 'en' ? 'Filled in — edit as you like'
+              : translated ? `Translated from the ${lname} Wikipedia — edit as you like`
+              : wiki.OWN_LANGS.includes(src.lang) ? `Filled in from the ${lname} Wikipedia — edit as you like`
+              : `Only in ${lname} — add a Claude key under You to translate it`);
           } catch { body.replaceChildren(h('p.muted', 'Could not fetch the article.')); }
         } }, h('span', r.title, h('small', { style: { display: 'block' } }, r.snippet.slice(0, 140) + '…')), h('small', r.lang.toUpperCase())))) : h('p.muted', 'Nothing on Wikipedia. You can write it yourselves.'),
         claude.hasKey()
@@ -315,13 +311,9 @@ export function renderProfileEdit(root, kindKey, rawId) {
     for (const k of ['name', 'image', 'source', 'edited', 'links', ...CONTENT_KEYS(K)]) {
       if (JSON.stringify(x[k] || null) !== JSON.stringify(orig[k] || null)) patch[k] = x[k] || undefined;
     }
-    const contentChanged = CONTENT_KEYS(K).some((k) => k in patch);
-    if (contentChanged) {
-      patch.textBy = me;
-      patch.approvals = { [me]: true }; // changed content needs the other's OK again
-    }
+    if (CONTENT_KEYS(K).some((k) => k in patch)) patch.textBy = me;
     if (isNew || Object.keys(patch).length) await store.save(K.coll, recId, patch);
-    toast(contentChanged && hasContent(x) ? `Saved — waiting for ${PEOPLE.filter((p) => p !== me).join(' & ')}` : 'Saved');
+    toast('Saved');
     location.hash = `#/${K.route}/${recId}`;
   }
 
@@ -353,7 +345,7 @@ export function renderProfileEdit(root, kindKey, rawId) {
     h('div.field',
       h('label', K.textLabel),
       text, sourceNote,
-      h('p.hint', 'Saving changes asks the other one of you to accept them.')),
+      h('p.hint', 'Sources in any language are fine; the text is written in English (or Dutch).')),
     x.image && h('div.field', h('label', 'Portrait'),
       h('div', { style: { display: 'flex', gap: '12px', alignItems: 'center' } },
         h('img', { src: x.image, alt: '', style: { width: '64px', height: '64px', objectFit: 'cover', borderRadius: '2px' }, referrerpolicy: 'no-referrer' }),

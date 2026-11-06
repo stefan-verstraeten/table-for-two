@@ -1,7 +1,7 @@
 // Service worker: keeps the app working offline and lets installed phones
 // know when a new version has been published. Run tools/bump.py to release.
 
-const VERSION = '2026.11.06-2';
+const VERSION = '2026.11.06-3';
 const SHELL = `shell-${VERSION}`;
 const TILES = 'tiles-v1';
 
@@ -35,6 +35,7 @@ const ASSETS = [
   'js/ui.js',
   'js/updates.js',
   'js/wiki.js',
+  'js/views/azlist.js',
   'js/views/dishes.js',
   'js/views/edit.js',
   'js/views/highlights.js',

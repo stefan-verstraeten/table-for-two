@@ -333,6 +333,7 @@ a { color: inherit; }
 .visit-head .place { font-size: 14px; color: var(--ink-2); }
 .visit-head .when { font: 400 italic 21px/1.3 var(--serif); color: var(--ink-2); margin-top: 16px; }
 .visit-head .occasion { font-size: 13px; color: var(--ink-3); margin-top: 4px; }
+.visit-head .gm-score { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); margin-top: 6px; }
 .visit-head .now-stars { font-size: 12px; color: var(--ink-3); margin-top: 8px; }
 
 .ornament { text-align: center; color: var(--linen); margin: 30px 0; letter-spacing: 0.6em; font-size: 12px; }
@@ -445,9 +446,17 @@ a { color: inherit; }
 .lane-text small { color: var(--ink-3); font-size: 12.5px; }
 .lane-count { font: 500 22px/1 var(--serif); color: var(--ink-3); }
 
-.az-jump { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: -8px 0 6px; }
-.az-jump a { font: 500 13px/1 var(--sans); color: var(--ink-3); text-decoration: none; padding: 6px 0; }
+.az-tools { position: sticky; top: 0; z-index: 5; background: var(--paper); margin: -4px -22px 0; padding: calc(var(--safe-top) + 8px) 22px 6px; border-bottom: 1px solid var(--rule); }
+.az-filter-row { position: relative; }
+.az-filter { width: 100%; padding-right: 90px; }
+.az-found { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); color: var(--ink-3); font-size: 12px; pointer-events: none; }
+.az-jump { display: flex; flex-wrap: wrap; gap: 0 4px; margin: 6px -4px 0; }
+.az-jump:empty { display: none; }
+.az-jump a { flex: none; min-width: 22px; text-align: center; font: 500 14px/1 var(--sans); color: var(--ink-2); text-decoration: none; padding: 7px 2px; }
+.gm-pill { font: 600 12px/1 var(--sans); letter-spacing: .02em; color: var(--ink-2); border: 1px solid var(--rule); border-radius: 3px; padding: 4px 6px; white-space: nowrap; }
+.score-dates { font: 400 13px/1 var(--sans); color: var(--ink-3); }
 .az-group { margin-top: 28px; }
+.az-group[hidden], .az-row[hidden] { display: none; }
 .az-row { display: flex; justify-content: space-between; align-items: center; gap: 14px; padding: 14px 0; border-bottom: 1px solid var(--rule); text-decoration: none; }
 .az-row b { display: block; font-size: 21px; font-weight: 500; line-height: 1.15; }
 .az-row small { display: block; color: var(--ink-3); font-size: 12.5px; margin-top: 2px; }

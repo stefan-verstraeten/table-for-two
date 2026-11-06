@@ -1,13 +1,13 @@
 // Keep in sync with VERSION in /sw.js (tools/bump.py updates both).
-export const APP_VERSION = '2026.11.06-2';
+export const APP_VERSION = '2026.11.06-3';
 
 export const PEOPLE = ['Stefan', 'Marleen'];
 
 export const DEFAULT_DATA_REPO = 'stefan-verstraeten/table-for-two-data';
 
 export const RATINGS = [
-  { id: 'unforgettable', label: 'Unforgettable' },
-  { id: 'wonderful', label: 'Wonderful' },
+  { id: 'unforgettable', label: 'Divine' },
+  { id: 'wonderful', label: 'Exceptional' },
   { id: 'very-good', label: 'Very good' },
   { id: 'good', label: 'Good' },
   { id: 'disappointing', label: 'Disappointing' },

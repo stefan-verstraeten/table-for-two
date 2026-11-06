@@ -12,7 +12,7 @@ import { mergeDuplicateRestaurants, fillCountryCodes } from './tidy.js';
 import { catalogueIngredients } from './ingredients.js';
 import { renderDishes, renderDish, renderDishEdit, renderIngredient, renderIngredientEdit, renderIngredientReview } from './views/dishes.js';
 import { renderHighlights } from './views/highlights.js';
-import { renderLane, renderRestaurants, renderRestaurant, goRandom } from './views/lane.js';
+import { renderLane, renderRestaurants, renderRestaurant, renderScores, goRandom } from './views/lane.js';
 import { renderList, renderDetail, renderProfileEdit, linkChefs } from './views/profiles.js';
 import { renderWishes } from './views/wishes.js';
 
@@ -34,7 +34,7 @@ function route() {
   const [, name = '', id, sub] = hash.slice(1).split('/');
   if (current === 'map' && name !== 'map') teardownMap();
   current = name || 'home';
-  const LANE = ['lane', 'restaurants', 'restaurant', 'chefs', 'chef', 'wines', 'wine', 'wishes', 'dishes', 'dish', 'dish-edit', 'ingredient', 'ingredient-edit', 'ingredient-review', 'highlights'];
+  const LANE = ['lane', 'restaurants', 'scores', 'restaurant', 'chefs', 'chef', 'wines', 'wine', 'wishes', 'dishes', 'dish', 'dish-edit', 'ingredient', 'ingredient-edit', 'ingredient-review', 'highlights'];
   const tab = LANE.includes(current) ? 'lane' : current;
   for (const a of tabs.querySelectorAll('a')) a.classList.toggle('active', a.dataset.tab === tab);
   tabs.style.display = EDITORS.includes(name) ? 'none' : '';
@@ -47,6 +47,7 @@ function route() {
     case 'random': return goRandom();
     case 'restaurants': return renderRestaurants(view);
     case 'restaurant': return renderRestaurant(view, id);
+    case 'scores': return renderScores(view, id);
     case 'chefs': return renderList(view, 'chefs');
     case 'chef': return renderDetail(view, 'chefs', id);
     case 'chef-edit': return renderProfileEdit(view, 'chefs', id);

@@ -1,7 +1,22 @@
 // Public-source lookups for chef bios and wine profiles (Wikipedia, CORS-enabled).
-// Searches English first, then French and Dutch, which cover most Belgian chefs.
+// Searches English and Dutch first, then other languages. An article in another
+// language is swapped for the same article in English or Dutch when one exists
+// (see inOwnLanguage); otherwise the caller translates it.
 
-const LANGS = ['en', 'fr', 'nl'];
+const LANGS = ['en', 'nl', 'fr', 'de', 'it', 'es'];
+export const OWN_LANGS = ['en', 'nl'];
+export const LANG_NAMES = { en: 'English', nl: 'Dutch', fr: 'French', de: 'German', it: 'Italian', es: 'Spanish' };
+
+// The English or Dutch version of an article, if Wikipedia has one: { lang, title } or null.
+export async function inOwnLanguage(lang, title) {
+  if (OWN_LANGS.includes(lang)) return { lang, title };
+  try {
+    const j = await api(lang, { action: 'query', prop: 'langlinks', titles: title, redirects: '1', lllimit: '500' });
+    const links = Object.values(j.query.pages)[0]?.langlinks || [];
+    for (const l of OWN_LANGS) { const hit = links.find((x) => x.lang === l); if (hit) return { lang: l, title: hit['*'] }; }
+  } catch { /* fall through */ }
+  return null;
+}
 
 function api(lang, params) {
   const q = new URLSearchParams({ format: 'json', origin: '*', ...params });
@@ -17,7 +32,7 @@ const stripTags = (s) => s.replace(/<[^>]+>/g, '').replace(/&quot;/g, '"').repla
 export async function search(term, hint = '') {
   const results = await Promise.all(LANGS.map(async (lang) => {
     try {
-      const j = await api(lang, { action: 'query', list: 'search', srsearch: `${term} ${hint}`.trim(), srlimit: '3' });
+      const j = await api(lang, { action: 'query', list: 'search', srsearch: `${term} ${hint}`.trim(), srlimit: '2' });
       return j.query.search.map((s) => ({ lang, title: s.title, snippet: stripTags(s.snippet) }));
     } catch { return []; }
   }));

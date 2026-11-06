@@ -65,6 +65,7 @@ export function renderVisit(root, id) {
 
     h('div.visit-head',
       v.stars?.kind && v.stars.kind !== 'none' ? h('div', stars(v.stars, { withLabel: true }) ) : null,
+      v.gaultMillau && h('div.gm-score', `Gault&Millau ${gm(v.gaultMillau)}/20`),
       h('h1', h('a', { href: `#/restaurant/${r.id}`, style: { textDecoration: 'none' } }, r.name)),
       h('div.place', [r.city, r.country].filter(Boolean).join(', '), (r.countryCode || countryCode(r.country)) ? ' ' + countryFlag(r.countryCode || countryCode(r.country)) : ''),
       h('div.when', formatDate(v.date), ago(v) && h('span.ago', ` · ${ago(v)}`)),
@@ -207,11 +208,14 @@ function chefSection(v, r, chef) {
 
 function restaurantSection(r, v, here) {
   const best = Math.max(0, ...here.filter((x) => x.stars?.kind === 'michelin').map((x) => x.stars.count || 0));
+  const gmBest = Math.max(0, ...here.map((x) => x.gaultMillau || 0));
   const rows = [
     ['Address', r.address || [r.city, r.country].filter(Boolean).join(', ')],
     ['Michelin', [v.stars?.kind === 'michelin' && v.stars.count ? `${v.stars.count} star${v.stars.count > 1 ? 's' : ''} that evening` : null,
       r.currentStars != null ? (r.currentStars ? `${r.currentStars} today` : 'not starred today') : null,
       here.length > 1 && best && best !== v.stars?.count ? `${best} at best in our visits` : null].filter(Boolean).join(' · ')],
+    ['Gault&Millau', [v.gaultMillau ? `${gm(v.gaultMillau)}/20 that evening` : null,
+      here.length > 1 && gmBest && gmBest !== v.gaultMillau ? `${gm(gmBest)} at best in our visits` : null].filter(Boolean).join(' · ')],
     ['Our visits', here.length > 1 ? `${here.length} evenings, ${formatDate(here[here.length - 1].date, { short: true })} – ${formatDate(here[0].date, { short: true })}` : 'Just this one, so far'],
   ].filter(([, val]) => val);
   return h('div.menu-souvenir',
@@ -221,3 +225,6 @@ function restaurantSection(r, v, here) {
       h('a.btn.small.ghost', { href: mapsLink(r), target: '_blank', rel: 'noopener' }, icon('pin'), 'Open in Maps'),
       h('a.btn.small.ghost', { href: `#/restaurant/${r.id}` }, 'All our evenings here')));
 }
+
+// Gault&Millau score as shown: 16, 16.5
+export const gm = (n) => String(n);

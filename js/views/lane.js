@@ -1,10 +1,10 @@
 import * as store from '../store.js';
 import { h, icon, photo, stars, formatDate, countryFlag, STAR_SVG } from '../ui.js';
 import { coverOf } from './home.js';
-import { needsMyApproval } from './profiles.js';
 import { PEOPLE } from '../config.js';
 import { allCourses } from '../ingredients.js';
 import { highlightsOf } from './highlights.js';
+import { azList } from './azlist.js';
 
 export function renderLane(root) {
   const visits = store.visits();
@@ -12,8 +12,6 @@ export function renderLane(root) {
   const chefs = store.list('chefs');
   const wines = store.list('wines');
   const wishes = store.list('wishes').filter((w) => !w.doneVisitId);
-  const pendingChefs = chefs.filter(needsMyApproval).length;
-  const pendingWines = wines.filter(needsMyApproval).length;
 
   const card = (href, title, count, sub, ic) => h('a.lane-card', { href },
     h('span.lane-icon', icon(ic)),
@@ -38,8 +36,9 @@ export function renderLane(root) {
     h('div.eyebrow.lane-sub', 'The archive'),
     h('nav.lane-list',
       card('#/restaurants', 'Restaurants A–Z', restaurants.size, 'Every table, alphabetically', 'journal'),
-      card('#/chefs', 'Chefs', chefs.length, pendingChefs ? `${pendingChefs} bio${pendingChefs > 1 ? 's' : ''} waiting for you` : 'Who cooked for us', 'chef'),
-      card('#/wines', 'Wines', wines.length, pendingWines ? `${pendingWines} profile${pendingWines > 1 ? 's' : ''} waiting for you` : 'What we drank', 'wine'),
+      card('#/scores', 'Restaurants by score', restaurants.size, 'Michelin and Gault&Millau, highest first', 'podium'),
+      card('#/chefs', 'Chefs', chefs.length, 'Who cooked for us', 'chef'),
+      card('#/wines', 'Wines', wines.length, 'What we drank', 'wine'),
       card('#/dishes', 'Dishes', allCourses().length, 'Every course, every ingredient', 'menu'),
       card('#/wishes', 'Wish list', wishes.length, 'Tables still to come', 'heart'),
       card('#/map', 'The map', countries(), 'Our gastronomic journey', 'map'),
@@ -60,6 +59,8 @@ export function goRandom() {
 
 const ARTICLES = /^((le|la|les|de|het|il|el|the)\s+|l['’]\s*|['’]t\s+|t['’]\s*)/i;
 export const sortName = (n) => (n || '').replace(ARTICLES, '').trim();
+
+const v0chef = (vs) => vs.map((v) => (v.chefId && store.get('chefs', v.chefId)?.name) || v.chef).filter(Boolean).join(' ');
 
 export function renderRestaurants(root) {
   const byId = new Map();
@@ -82,19 +83,19 @@ export function renderRestaurants(root) {
   root.replaceChildren(h('div.page',
     backBar('#/lane', 'Memory lane'),
     h('h1.page-title', 'Restaurants A–Z'),
-    groups.size > 1 && h('div.az-jump', [...groups.keys()].map((k) => h('a', { href: `#az-${k}`, onclick: (e) => {
-      e.preventDefault(); document.getElementById(`az-${k}`)?.scrollIntoView({ behavior: 'smooth' });
-    } }, k))),
-    rows.length ? [...groups].map(([k, list]) => h('section.az-group', { id: `az-${k}` },
-      h('div.year-head', h('h2', k)),
-      list.map(({ r, vs }) => {
+    rows.length ? azList('restaurants', [...groups].map(([k, list]) => ({
+      id: k, jump: k, head: h('div.year-head', h('h2', k)),
+      rows: list.map(({ r, vs }) => {
         const best = vs.map((v) => v.stars).filter((s) => s && s.kind !== 'none')
           .sort((a, b) => (b.kind === 'michelin') - (a.kind === 'michelin') || b.count - a.count)[0];
-        return h('a.az-row', { href: `#/restaurant/${r.id}` },
-          h('span', h('b.serif', r.name), h('small', [r.city, r.country].filter(Boolean).join(', '))),
-          h('span.az-meta', stars(best), h('small', vs.length > 1 ? `${vs.length} visits` : formatDate(vs[0].date, { short: true }))));
+        return {
+          text: [r.name, r.city, r.country, v0chef(vs)].join(' '),
+          el: h('a.az-row', { href: `#/restaurant/${r.id}` },
+            h('span', h('b.serif', r.name), h('small', [r.city, r.country].filter(Boolean).join(', '))),
+            h('span.az-meta', stars(best), h('small', vs.length > 1 ? `${vs.length} visits` : formatDate(vs[0].date, { short: true })))),
+        };
       }),
-    )) : h('p.muted', 'No restaurants yet.'),
+    })), { placeholder: 'Find a restaurant, town or country' }) : h('p.muted', 'No restaurants yet.'),
   ));
 }
 
@@ -125,4 +126,70 @@ export function renderRestaurant(root, id) {
 
 export function backBar(href, label) {
   return h('div.topbar', h('a.text-btn.back-link', { href }, '‹ ', label));
+}
+
+// ---------- ranking ----------
+// One entry per restaurant per distinct score: a restaurant that had 1 star on
+// one visit and 2 on the next appears twice, with the dates in brackets.
+// Our own stars are left out; the other guide breaks ties.
+let scoreView = 'michelin';
+const STAR_WORDS = ['Not starred', 'One star', 'Two stars', 'Three stars'];
+
+export function renderScores(root, which) {
+  if (which === 'michelin' || which === 'gm') scoreView = which;
+  const mich = (v) => (v.stars?.kind === 'michelin' ? v.stars.count || 0 : 0);
+  const entries = new Map();
+  for (const v of store.visits()) { // newest first
+    const r = store.restaurant(v.restaurantId);
+    if (!r) continue;
+    const key = `${r.id}|${mich(v)}|${v.gaultMillau || 0}`;
+    if (!entries.has(key)) entries.set(key, { r, stars: mich(v), uncertain: v.stars?.kind === 'michelin' && v.stars.uncertain, gm: v.gaultMillau || 0, visits: [] });
+    entries.get(key).visits.push(v);
+  }
+  const list = [...entries.values()];
+  const perRestaurant = new Map();
+  for (const e of list) perRestaurant.set(e.r.id, (perRestaurant.get(e.r.id) || 0) + 1);
+  const byName = (a, b) => sortName(a.r.name).localeCompare(sortName(b.r.name), 'en', { sensitivity: 'base' });
+  const byDate = (a, b) => store.sortKey(b.visits[0]) - store.sortKey(a.visits[0]);
+
+  const isMich = scoreView === 'michelin';
+  const primary = (e) => (isMich ? e.stars : e.gm);
+  const secondary = (e) => (isMich ? e.gm : e.stars);
+  list.sort((a, b) => primary(b) - primary(a) || secondary(b) - secondary(a) || byName(a, b) || byDate(a, b));
+
+  const groups = new Map();
+  for (const e of list) {
+    const k = primary(e);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(e);
+  }
+  const headOf = (k) => (isMich ? STAR_WORDS[k] || `${k} stars` : k ? `${k}/20` : 'No score known');
+
+  const row = (e) => {
+    const v = e.visits[0];
+    const dates = perRestaurant.get(e.r.id) > 1 ? ` (${e.visits.map((x) => formatDate(x.date, { short: true })).join(', ')})` : '';
+    const michEl = e.stars ? stars({ kind: 'michelin', count: e.stars, uncertain: e.uncertain }) : null;
+    const gmEl = e.gm ? h('span.gm-pill', `${e.gm}/20`) : null;
+    return h('a.az-row', { href: `#/visit/${v.id}` },
+      h('span', h('b.serif', e.r.name, dates && h('span.score-dates', dates)),
+        h('small', [e.r.city, e.r.country].filter(Boolean).join(', '))),
+      h('span.az-meta', isMich ? [gmEl, michEl] : [michEl, gmEl]));
+  };
+
+  const seg = h('div.segmented', { style: { margin: '0 0 6px' } },
+    [['michelin', 'Michelin'], ['gm', 'Gault&Millau']].map(([id, label]) =>
+      h(`button${scoreView === id ? '.on' : ''}`, { onclick: () => { scoreView = id; renderScores(root); } }, label)));
+
+  root.replaceChildren(h('div.page',
+    backBar('#/lane', 'Memory lane'),
+    h('h1.page-title', 'Restaurants by score'),
+    seg,
+    h('p.hint', isMich
+      ? 'Stars on the evening we went. Gault&Millau breaks ties; our own stars don’t count.'
+      : 'Gault&Millau score on the evening we went. Michelin stars break ties.'),
+    list.length ? [...groups].map(([k, rows]) => h('section.az-group',
+      h('div.year-head', h('h2', headOf(k)), h('small.muted', `${rows.length}`)),
+      rows.map(row))) : h('p.muted', 'No restaurants yet.'),
+  ));
+  window.scrollTo(0, 0);
 }

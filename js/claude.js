@@ -67,7 +67,7 @@ const WEB_TOOLS = [
 
 const CHEF_SYSTEM = `You research chefs for a private, beautifully typeset journal kept by a couple who love fine dining.
 Search the web (Michelin Guide, Gault&Millau, the restaurant's own site, reputable press in any language) and report only facts you found in sources. Never guess a date or a name; leave a field empty when the sources don't say.
-Write in English, in a warm but factual magazine tone.`;
+Write in English (whatever the language of the sources), in a warm but factual magazine tone.`;
 
 export async function researchChef(name, context = '') {
   const text = await ask({
@@ -89,8 +89,8 @@ Finish your reply with one JSON object in a \`\`\`json block, with these string 
 }
 
 const WINE_SYSTEM = `You research wines for a private journal kept by a couple who love fine dining.
-Search the web (the producer's own site, importers, reputable wine press) and report only facts you found. Leave a field empty when unsure.
-Write in English, in a warm but factual tone.`;
+Search the web (the producer's own site, importers, reputable wine press, sources in any language) and report only facts you found. Leave a field empty when unsure.
+Write in English (whatever the language of the sources), in a warm but factual tone.`;
 
 export async function researchWine(w) {
   const desc = [w.name, w.vintage, w.producer, w.region, w.country, w.grapes].filter(Boolean).join(', ');
@@ -213,6 +213,17 @@ ${list}
 Reply with only a \`\`\`json block: {"items": [{"id": "…", "english": "…", "note": ""}]}`,
   });
   return lastJSON(text).items || [];
+}
+
+// A bio or wine profile from a source in another language → English.
+export async function translateText(text, from = '') {
+  const out = await ask({
+    effort: 'low',
+    content: `Translate this text${from ? ` (language: ${from})` : ''} into natural English for a private food and wine journal. Keep names of people, restaurants, places and wines as they are, and keep the paragraph breaks. Reply with only the translation.
+
+${text}`,
+  });
+  return out.trim();
 }
 
 // A quick, cheap call to check a key works.

@@ -35,7 +35,7 @@ export function renderHome(root) {
     hero,
     h('div.masthead',
       h('div.watermark', { html: STAR_SVG.repeat(3), 'aria-hidden': 'true' }),
-      h('h1', 'Gastronomical Memories'),
+      h('h1', 'Around the World in 80 Plates'),
       h('div.eyebrow', 'Simply lovely'),
       visits.length > 0 && h('div.tally',
         h('div', h('b', restIds.size), h('span', restIds.size === 1 ? 'Restaurant' : 'Restaurants')),

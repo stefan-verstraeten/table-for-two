@@ -4,6 +4,7 @@ import { countryCode } from '../countries.js';
 
 let map = null;
 const CONTINENT_ZOOM = 4;
+const BELGIUM = [[49.5, 2.55], [51.5, 6.4]];
 let filter = 'all';
 
 export function teardownMap() {
@@ -93,7 +94,7 @@ export function renderMap(root) {
     else map.fitBounds(pts, { padding: [40, 40], maxZoom });
   }
 
-  if (located.length) fit(located);
-  else map.setView([48.5, 6], CONTINENT_ZOOM);
+  // Opens on Belgium; the country buttons below zoom to the rest of the journey.
+  map.fitBounds(BELGIUM, { padding: [8, 8] });
   setTimeout(() => map && map.invalidateSize(), 50);
 }
