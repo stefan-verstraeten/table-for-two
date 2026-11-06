@@ -167,7 +167,7 @@ a { color: inherit; }
   position: absolute; left: 22px; right: 22px; bottom: 8px; z-index: 2; text-align: center;
 }
 
-.masthead { position: relative; text-align: center; padding: 0 22px; margin-top: -6px; isolation: isolate; }
+.masthead { position: relative; text-align: center; padding: 0 22px; margin-top: 22px; isolation: isolate; }
 .masthead > *:not(.watermark) { position: relative; }
 .masthead h1 { font: 500 40px/1.05 var(--serif); margin: 0 0 8px; }
 .watermark { position: absolute; inset: -40px 0 -20px; z-index: -1; pointer-events: none; overflow: hidden; }
