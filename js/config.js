@@ -1,5 +1,5 @@
 // Keep in sync with VERSION in /sw.js (tools/bump.py updates both).
-export const APP_VERSION = '2026.11.06-1';
+export const APP_VERSION = '2026.11.06-2';
 
 export const PEOPLE = ['Stefan', 'Marleen'];
 

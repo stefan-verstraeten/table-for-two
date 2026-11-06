@@ -124,6 +124,8 @@ export async function readMenu(blob) {
     effort: 'low',
     content: [await imageBlock(blob), { type: 'text', text: `This is a photo of a restaurant tasting menu. Transcribe the courses in the order they were served (for a two-column menu: the left column top to bottom, then the right column). Keep the original language and spelling. Leave out headings, dates and the guests' names.
 
+In "detail", separate the ingredients with commas, even when the menu uses dashes, dots, line breaks or just spaces between them.
+
 Reply with only a \`\`\`json block: {"title": "menu title if printed, else empty", "courses": [{"dish": "Pompoen", "detail": "Zoommeer paling, tsukudani, gember"}]}` }],
   });
   return lastJSON(text);
@@ -166,7 +168,7 @@ export async function readMeal(items) {
   for (const [i, it] of items.entries()) content.push({ type: 'text', text: `Photo ${i} (${it.kind}):` }, await imageBlock(it.blob));
   content.push({ type: 'text', text: `These photos from one restaurant meal show the menu, the wine list or pairing, and/or wine bottles.
 
-1. Transcribe the courses from any menu, in the order served (for a two-column menu: left column top to bottom, then right). Keep the original language and spelling. Leave out headings, dates and guests' names.
+1. Transcribe the courses from any menu, in the order served (for a two-column menu: left column top to bottom, then right). Keep the original language and spelling. Leave out headings, dates, prices, supplements and guests' names. In "detail", separate the ingredients with commas, even when the menu uses dashes, dots, line breaks or just spaces between them.
 2. List every wine, once each — a bottle that also appears on the wine list is one wine. For each: "name" (cuvée or wine name without the vintage; if there is none, the appellation), "vintage", "producer", "grapes", "region" (appellation as printed), "country" (infer from the region when obvious), "style" (Red, White, Rosé, Sparkling, Sweet, Fortified or Orange — infer when reasonably sure, else empty), "photo" (the number of the bottle photo it was read from, else null). Read labels carefully; leave a field empty rather than guess.
 
 Reply with only a \`\`\`json block: {"title": "menu title if printed, else empty", "courses": [{"dish": "", "detail": ""}], "wines": [...]}` });

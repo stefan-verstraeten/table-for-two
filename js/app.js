@@ -10,7 +10,7 @@ import { renderSettings } from './views/settings.js';
 import { registerUpdates } from './updates.js';
 import { mergeDuplicateRestaurants, fillCountryCodes } from './tidy.js';
 import { catalogueIngredients } from './ingredients.js';
-import { renderDishes, renderDish, renderIngredient, renderIngredientEdit } from './views/dishes.js';
+import { renderDishes, renderDish, renderDishEdit, renderIngredient, renderIngredientEdit, renderIngredientReview } from './views/dishes.js';
 import { renderHighlights } from './views/highlights.js';
 import { renderLane, renderRestaurants, renderRestaurant, goRandom } from './views/lane.js';
 import { renderList, renderDetail, renderProfileEdit, linkChefs } from './views/profiles.js';
@@ -27,14 +27,14 @@ const tabs = h('nav.tabbar',
 );
 
 let current = '';
-const EDITORS = ['edit', 'new', 'chef-edit', 'wine-edit', 'ingredient-edit'];
+const EDITORS = ['edit', 'new', 'chef-edit', 'wine-edit', 'ingredient-edit', 'dish-edit', 'ingredient-review'];
 
 function route() {
   const hash = location.hash || '#/';
   const [, name = '', id, sub] = hash.slice(1).split('/');
   if (current === 'map' && name !== 'map') teardownMap();
   current = name || 'home';
-  const LANE = ['lane', 'restaurants', 'restaurant', 'chefs', 'chef', 'wines', 'wine', 'wishes', 'dishes', 'dish', 'ingredient', 'ingredient-edit', 'highlights'];
+  const LANE = ['lane', 'restaurants', 'restaurant', 'chefs', 'chef', 'wines', 'wine', 'wishes', 'dishes', 'dish', 'dish-edit', 'ingredient', 'ingredient-edit', 'ingredient-review', 'highlights'];
   const tab = LANE.includes(current) ? 'lane' : current;
   for (const a of tabs.querySelectorAll('a')) a.classList.toggle('active', a.dataset.tab === tab);
   tabs.style.display = EDITORS.includes(name) ? 'none' : '';
@@ -56,6 +56,8 @@ function route() {
     case 'wishes': return renderWishes(view);
     case 'dishes': return renderDishes(view, id);
     case 'dish': return renderDish(view, id, sub);
+    case 'dish-edit': return renderDishEdit(view, id, sub);
+    case 'ingredient-review': return renderIngredientReview(view);
     case 'ingredient': return renderIngredient(view, id);
     case 'ingredient-edit': return renderIngredientEdit(view, id);
     case 'highlights': return renderHighlights(view, id);

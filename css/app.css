@@ -597,3 +597,33 @@ a.chip { padding: 8px 14px; text-decoration: none; font-size: 15px; }
 .check-row { display: flex; gap: 10px; align-items: flex-start; font-size: 14.5px; margin-top: 14px; }
 .check-row input { margin-top: 3px; width: 18px; height: 18px; accent-color: var(--burgundy); }
 .az-meta .badge-state { display: block; margin-bottom: 4px; }
+
+/* ---------- fixing dishes & ingredients ---------- */
+.fix-list { border-top: 1px solid var(--rule); }
+.fix-row { display: flex; width: 100%; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 2px; border-bottom: 1px solid var(--rule); text-align: left; background: none; }
+.fix-row b { display: block; font: 500 19px/1.2 var(--serif); }
+.fix-row small { display: block; color: var(--ink-3); font-size: 12.5px; margin-top: 2px; }
+.fix-row.hidden b { color: var(--ink-3); text-decoration: line-through; text-decoration-color: var(--linen); }
+.fix-row.check small { color: var(--burgundy); }
+.fix-more { color: var(--ink-3); font-size: 20px; padding: 0 4px; }
+.fix-add { display: flex; gap: 8px; margin-top: 14px; align-items: center; }
+.fix-add .input { flex: 1; }
+.action-sheet h3 { font-size: 24px; margin: 0 0 2px; }
+.action-sheet .place-list button small { display: block; white-space: normal; color: var(--ink-3); font-size: 12px; margin-top: 2px; }
+.action-sheet .place-list button.danger span { color: var(--burgundy); }
+.split-words { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: 14px 0 6px; }
+.split-word { font: 500 20px/1 var(--serif); padding: 8px 4px; }
+.split-gap { min-width: 34px; height: 34px; border-radius: 50%; border: 1px dashed var(--linen); color: var(--ink-3); font-size: 15px; background: #fff; }
+.split-gap.on { border-style: solid; border-color: var(--burgundy); color: var(--burgundy); }
+.split-preview { font-size: 15px; color: var(--ink-2, var(--ink)); margin: 8px 0 4px; }
+.tidy-box { margin-top: 30px; border-top: 1px solid var(--rule); padding-top: 12px; }
+.tidy-box summary { font: 500 11px/1 var(--sans); letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-3); padding: 8px 0; cursor: pointer; }
+.tidy-box h4 { font: 500 11px/1 var(--sans); letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3); margin: 18px 0 4px; }
+.tidy-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--rule); font-size: 15px; }
+.tidy-row .text-btn { font-size: 13px; flex-shrink: 0; }
+.chip-q { color: var(--burgundy); margin-left: 4px; font-weight: 600; }
+.review-context { margin: 18px 0 8px; }
+.review-context p { font: italic 400 16.5px/1.45 var(--serif); margin: 0 0 10px; }
+.review-context b { font-style: normal; font-weight: 500; }
+.review-context small { display: block; font: 400 12px/1.3 var(--sans); font-style: normal; color: var(--ink-3); margin-top: 2px; }
+.review-more { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; justify-content: center; }

@@ -1,39 +1,74 @@
 // Dishes and ingredients, derived from the menus (visit.courses).
 //
 // A course is { dish: 'Parelhoen', detail: 'daslook, aligot, groene olijf' }.
-// Its ingredients are the dish name plus each comma-separated part of the
-// detail, as written on the menu ("terms"). Ingredient records hold the
-// English name and the terms that mean it, so one ingredient page gathers
-// "parelhoen", "pintade" and "guinea fowl" alike. Terms nobody has catalogued
-// yet get a record automatically, translated with the built-in dictionary when
-// it knows the words; the rest is fixed by hand or by Claude.
+// Its ingredients are the dish name plus each part of the detail, as written
+// on the menu ("terms"): parts are separated by commas, dashes, slashes, "&",
+// "en"/"and"… Ingredient records hold the English name and the terms that mean
+// it, so one ingredient page gathers "parelhoen", "pintade" and "guinea fowl".
+//
+// Corrections, from small to large:
+// - per dish:   course.removed = [term keys]  (not in this dish)
+//               course.extra   = [texts]      (added to this dish)
+// - everywhere: an ingredient record with splitInto = [texts] is a split
+//               rule: that term is really several ingredients.
+//               notIngredient hides a record everywhere; renaming to an
+//               existing name joins the two.
+// Terms nobody has catalogued yet get a record automatically, translated with
+// the built-in dictionary when it knows the words.
 
 import * as store from './store.js';
 
 export const termKey = (s) => (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '')
-  .toLowerCase().replace(/[’']/g, "'").replace(/[^a-z0-9' -]+/g, ' ').replace(/\s+/g, ' ').trim();
+  .toLowerCase().replace(/[’']/g, "'").replace(/[^a-z0-9' -]+/g, ' ').replace(/\s+/g, ' ').replace(/^[ '-]+|[ '-]+$/g, '').trim();
 
-// "witte asperge 'Dikker'" → "witte asperge"; "Intens ember 81%" → "Intens ember".
+// "witte asperge 'Dikker'" → "witte asperge"; "Intens ember 81%" → "Intens ember";
+// "(supplement €25)" → "".
 function cleanTerm(s) {
   return (s || '')
-    .replace(/['‘’"“”][^'‘’"“”]*['‘’"“”]/g, ' ')
-    .replace(/^[*•·\-–\s]+/, '')
+    .replace(/\([^)]*\)?|\[[^\]]*\]?/g, ' ')
+    .replace(/[€$£]\s*\d+([.,]\d+)?|\d+([.,]\d+)?\s*[€$£]/g, ' ')
+    .replace(/['‘’"“”«»][^'‘’"“”«»]*['‘’"“”«»]/g, ' ')
+    .replace(/^[*•·\-–—\s]+|[*\-–—\s]+$/g, '')
     .replace(/\b\d+\s*(%|g|gr|cl|ml|weken|dagen|maanden|jaar|days|weeks|months|years)?(?=\s|$)/gi, ' ')
     .replace(/\s+/g, ' ').trim();
 }
 
-export function termsOf(course) {
-  const parts = [course.dish, ...String(course.detail || '').split(/\s*[,;\/]\s*|\s+\+\s+/)];
+// Splits a menu line into its parts. "lente- en zeegroenten" stays whole.
+const SEPARATORS = /\s*[,;\/|·•∙+\n]\s*|\s+\.\s+|\s*[—–]\s*|\s+-\s+|\s+&\s+|(?<!-)\s+(?:en|and|et|und)\s+/i;
+
+// Everything on the menu line, as written (before any corrections).
+export function rawTerms(course) {
+  const parts = [course.dish, ...String(course.detail || '').split(SEPARATORS)];
   const seen = new Set();
   const out = [];
-  for (const p of parts) {
+  for (const p of parts.flatMap((x) => String(x || '').split(SEPARATORS))) {
     const text = cleanTerm(p);
     const key = termKey(text);
-    if (key.length < 2 || seen.has(key)) continue;
+    if (key.length < 2 || /^\d+$/.test(key) || seen.has(key)) continue;
     seen.add(key);
     out.push({ text, key });
   }
   return out;
+}
+
+// The dish's terms after splits, additions and removals.
+export function termsOf(course, idx = termIndex()) {
+  const out = [];
+  const seen = new Set();
+  const push = (t, depth) => {
+    const rule = idx.get(t.key);
+    if (rule?.splitInto?.length && depth < 3) {
+      for (const part of rule.splitInto) push({ text: part, key: termKey(part), from: t.from || t.text }, depth + 1);
+      return;
+    }
+    if (!t.key || seen.has(t.key)) return;
+    seen.add(t.key);
+    out.push(t);
+  };
+  for (const t of rawTerms(course)) push(t, 0);
+  for (const x of course.extra || []) push({ text: x, key: termKey(x), added: true }, 0);
+  const removed = new Set(course.removed || []);
+  return out.filter((t) => !removed.has(t.key));
 }
 
 // Every course of every visit, newest visit first.
@@ -45,20 +80,19 @@ export function allCourses() {
   return out;
 }
 
-// term key → ingredient record (hidden "not an ingredient" ones included).
+// term key → ingredient record (split rules and hidden ones included).
+// A term listed on a record wins over a record's own name.
 export function termIndex() {
   const idx = new Map();
-  for (const ing of store.list('ingredients')) {
-    for (const t of ing.terms || []) if (!idx.has(t)) idx.set(t, ing);
-    const own = termKey(ing.name);
-    if (own && !idx.has(own)) idx.set(own, ing);
-  }
+  const all = store.list('ingredients');
+  for (const ing of all) for (const t of ing.terms || []) if (!idx.has(t)) idx.set(t, ing);
+  for (const ing of all) { const own = termKey(ing.name); if (own && !idx.has(own)) idx.set(own, ing); }
   return idx;
 }
 
 export function ingredientsOfCourse(c, idx = termIndex()) {
   const out = [];
-  for (const t of termsOf(c)) {
+  for (const t of termsOf(c, idx)) {
     const ing = idx.get(t.key);
     if (ing && !ing.notIngredient && !out.includes(ing)) out.push(ing);
   }
@@ -67,7 +101,7 @@ export function ingredientsOfCourse(c, idx = termIndex()) {
 
 export function coursesWith(ingId) {
   const idx = termIndex();
-  return allCourses().filter(({ c }) => termsOf(c).some((t) => idx.get(t.key)?.id === ingId));
+  return allCourses().filter(({ c }) => termsOf(c, idx).some((t) => idx.get(t.key)?.id === ingId));
 }
 
 // ---------- translation ----------
@@ -162,19 +196,52 @@ const ADJ = {
   europese: 'European', noordzee: 'North Sea', zeeuwse: 'Zeeland', belgische: 'Belgian', ijslandse: 'Icelandic', japanse: 'Japanese', intens: 'intense', intense: 'intense', lente: 'spring', zomer: 'summer', herfst: 'autumn', winter: 'winter',
 };
 
+// More words seen on our menus.
+Object.assign(DICT, {
+  kokosnoot: 'coconut', kokos: 'coconut', look: 'garlic', 'zwarte look': 'black garlic', wang: 'cheek', kalfswang: 'veal cheek', varkenswang: 'pork cheek', runderwang: 'beef cheek',
+  appelbloesem: 'apple blossom', bloesem: 'blossom', kamille: 'chamomile', camille: 'chamomile', lavas: 'lovage', meiboter: 'May butter', dragonazijn: 'tarragon vinegar',
+  wulk: 'whelk', wulken: 'whelks', coquille: 'scallop', 'bronzen venkel': 'bronze fennel', cedraat: 'citron', kruiden: 'herbs', 'groene kruiden': 'green herbs', mostarda: 'mostarda',
+  huacatay: 'huacatay', boterraap: 'butter turnip', roodhoorntjeswier: 'red horn seaweed', schildersverdriet: 'London pride', kaaskar: 'cheese trolley', kosho: 'kosho', 'yuzu kosho': 'yuzu kosho',
+  cevenne: 'Cévennes', 'cevenne ajuin': 'Cévennes onion', viooltje: 'violet', viooltjes: 'violets', oesterblad: 'oyster leaf', ijzerkruid: 'verbena', verveine: 'verbena',
+  doperwt: 'pea', wintertruffel: 'winter truffle', zomertruffel: 'summer truffle', peperkoek: 'gingerbread', zeegras: 'seagrass', winterpostelein: 'winter purslane',
+  pate: 'pâté', opgelegde: 'preserved', 'opgelegde citroen': 'preserved lemon', 'ingelegde': 'pickled', belgisch: 'Belgian', cultuurrund: 'Belgian heritage beef', 'belgisch cultuurrund': 'Belgian heritage beef',
+  tijgermelk: 'tiger’s milk', cashewnoot: 'cashew', cashewnoten: 'cashews', bospaddenstoel: 'wild mushroom', bospaddenstoelen: 'wild mushrooms', roodbaars: 'redfish', duindoornbes: 'sea buckthorn', duindoorn: 'sea buckthorn', koolraap: 'swede',
+  buikspek: 'pork belly', galangal: 'galangal', puntpaprika: 'pointed pepper', tomaatjes: 'tomatoes', 'tomaatjes uit eigen tuin': 'home-grown tomatoes', schotse: 'Scottish', emulsie: 'emulsion', velouté: 'velouté', veloute: 'velouté', semifreddo: 'semifreddo', romesco: 'romesco', koreaans: 'Korean', koreaanse: 'Korean', noordzeeschelp: 'North Sea shellfish', schelp: 'shellfish', holstein: 'Holstein beef',
+  citroenverbena: 'lemon verbena', sjiso: 'shiso', hazelnootolie: 'hazelnut oil', notenolie: 'nut oil', bieslookolie: 'chive oil', dilleolie: 'dill oil', zeeduivelwang: 'monkfish cheek',
+});
+// Kitchen techniques and menu words: catalogued, but hidden as "not an ingredient".
+const NOT_INGREDIENT = new Set(['roken', 'fermenteren', 'pekelen', 'drogen', 'garen', 'grillen', 'konfijten', 'rijpen', 'marineren', 'stomen', 'smoking', 'fermenting', 'pickling', 'drying', 'curing',
+  'supplement', 'supplementen', 'amuse', 'amuses', 'amuse bouche', 'amuse-bouche', 'mignardises', 'friandises', 'zoetigheden', 'pre-dessert', 'predessert', 'dessert', 'desserts', 'voorgerecht', 'hoofdgerecht',
+  'kaaskar', 'cheese trolley', 'fromages', 'kazen', 'menu', 'or', 'of', 'ou']);
+
+// English words that need no translation (menus written in English).
+const ENGLISH = new Set([
+  ...Object.values(DICT).flatMap((v) => termKey(v).split(' ')), ...Object.values(ADJ).flatMap((v) => termKey(v).split(' ')),
+  ...('sauce dressing salsa soy noodle noodles omelet omelette sushi rice cress tofu silken corn sweetcorn marinated roasted grilled smoked fried braised steamed pickled cured raw fresh traditional japanese ' +
+    'korean chinese thai french italian spanish nordic belgian seared poached glazed charred toasted crispy crunchy creamy whipped foam emulsion gel jelly puree crumble crisp crisps tuile tuiles ' +
+    'broth stock jus reduction vinaigrette mayo mayonnaise aioli butter cream milk cheese yogurt egg eggs yolk tartlet tart cake biscuit sorbet granita ice parfait mousse ganache praline caramel ' +
+    'leaves leaf shoots flowers flower blossom seeds seed oil vinegar salt pepper sugar honey syrup juice zest peel sake mirin soba udon ramen tempura teriyaki ponzu dashi miso wasabi kimchi gochujang ' +
+    'sashimi nigiri maki temaki gunkan tataki tartare carpaccio ceviche crudo tobiko ikura uni hamachi toro otoro chutoro maguro unagi tamago dumpling dumplings dimsum bao gyoza broccolini daikon ' +
+    'chorizo corail chipotle harissa nduja pancetta guanciale lardo mortadella sobrasada ssamjang yuzu sudachi kumquat physalis ' +
+    'katsuobushi shirokombu myoga akami ikejime plankton shiso nori kombu yuzu sudachi ' +
+    'caprese burrata gnocchi ravioli tortellini risotto polenta focaccia bread sourdough brioche wagyu beef veal lamb pork chicken duck pigeon venison fish shellfish clams clam mussels oysters lobster crab prawns shrimp gin').split(' '),
+]);
+
 // English name for a term as written on a menu, or null when some word is unknown.
 export function translate(text) {
   const key = termKey(text);
   if (DICT[key]) return DICT[key];
-  const words = text.split(/\s+/);
+  const words = String(text).split(/\s+/).filter(Boolean);
   const out = [];
   for (const w of words) {
     const k = termKey(w);
     if (!k) continue;
     if (DICT[k]) out.push(DICT[k]);
     else if (ADJ[k]) out.push(ADJ[k]);
-    else if (/^[A-ZÀ-Ý]/.test(w) && words.length > 1) out.push(w); // a proper name: Zoommeer, Gariguette
-    else if (/^(en|et|and|e|y|met|avec|with|di|de|du|des|van|la|le|les|au|aux|a|à|x)$/i.test(k)) out.push(k === 'met' || k === 'avec' ? 'with' : k === 'x' ? '×' : /^(en|et|e|y)$/.test(k) ? 'and' : k);
+    else if (ENGLISH.has(k)) out.push(k);
+    else if (/^[A-ZÀ-Ý][a-zà-ÿ]/.test(w) && words.length > 1) out.push(w); // a proper name: Zoommeer, Gariguette (not ALL CAPS)
+    else if (/^(met|avec|with)$/.test(k)) out.push('with');
+    else if (/^(di|de|du|des|van|la|le|les|au|aux|a|x)$/.test(k)) out.push(k === 'x' ? '×' : k);
     else return null;
   }
   return out.join(' ').trim() || null;
@@ -184,28 +251,51 @@ export function translate(text) {
 
 const titleCase = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 export const displayName = (ing) => ing ? titleCase(ing.name || '') : '';
+const nameFor = (text) => translate(text) || text.toLowerCase();
 
-// Make sure every term on every menu belongs to an ingredient record.
+// Make sure every term on every menu belongs to an ingredient record, and
+// tidy the records the app made itself (never the ones we edited by hand).
 let running = null;
 export function catalogueIngredients() {
   running ||= (async () => {
     try {
       const idx = termIndex();
-      const byName = new Map(store.list('ingredients').map((i) => [termKey(i.name), i]));
+      const byName = new Map(store.list('ingredients').filter((i) => !i.rule).map((i) => [termKey(i.name), i]));
+      const used = new Set();
       for (const { c } of allCourses()) {
-        for (const t of termsOf(c)) {
+        for (const t of termsOf(c, idx)) {
+          used.add(t.key);
           if (idx.has(t.key)) continue;
           const en = translate(t.text);
           const name = en || t.text.toLowerCase();
           const existing = byName.get(termKey(name));
           if (existing) {
-            await store.save('ingredients', existing.id, { terms: [...(existing.terms || []), t.key] });
+            await store.save('ingredients', existing.id, { terms: [...new Set([...(existing.terms || []), t.key])] });
             idx.set(t.key, existing);
             continue;
           }
-          const id = store.newId();
-          const rec = await store.save('ingredients', id, { name, terms: [t.key], ...(en ? {} : { untranslated: true }) });
+          const hide = NOT_INGREDIENT.has(t.key) || NOT_INGREDIENT.has(termKey(name));
+          const rec = await store.save('ingredients', store.newId(), { name, terms: [t.key], ...(en || hide ? {} : { untranslated: true }), ...(hide ? { notIngredient: true } : {}) });
           idx.set(t.key, rec); byName.set(termKey(name), rec);
+        }
+      }
+      // Records the app made that no menu uses any more (e.g. "amandel — kokosnoot"
+      // from before dashes were understood) go; untranslated ones get another try.
+      for (const ing of store.list('ingredients')) {
+        if (ing.rule || ing.edited) continue;
+        const keys = [...(ing.terms || []), termKey(ing.name)];
+        if (!keys.some((k) => used.has(k))) { await store.remove('ingredients', ing.id); continue; }
+        // Names from before ALL-CAPS menus were understood ("red SHISO"), and techniques.
+        const first = (ing.terms || [])[0];
+        if (first && /\b[A-Z]{2,}/.test(ing.name)) {
+          const en = translate(first);
+          await store.save('ingredients', ing.id, { name: en || first, untranslated: en ? undefined : true });
+          continue;
+        }
+        if (!ing.notIngredient && keys.some((k) => NOT_INGREDIENT.has(k))) { await store.save('ingredients', ing.id, { notIngredient: true, untranslated: undefined }); continue; }
+        if (ing.untranslated) {
+          const en = translate(ing.name) || (ing.terms || []).map((k) => translate(k)).find(Boolean);
+          if (en) await store.save('ingredients', ing.id, { name: en, untranslated: undefined, terms: [...new Set([...(ing.terms || []), termKey(ing.name)])] });
         }
       }
       await mergeDuplicateIngredients();
@@ -216,7 +306,8 @@ export function catalogueIngredients() {
 
 // Two phones cataloguing the same new menu create two records: fold them together.
 export async function mergeDuplicateIngredients() {
-  const all = store.list('ingredients').sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
+  const all = store.list('ingredients').filter((i) => !i.rule)
+    .sort((a, b) => (!!b.edited - !!a.edited) || (a.createdAt || '').localeCompare(b.createdAt || ''));
   const keep = new Map();
   for (const ing of all) {
     const k = termKey(ing.name);
@@ -232,6 +323,76 @@ export async function mergeIngredient(fromId, intoId) {
   const terms = [...new Set([...(into.terms || []), ...(from.terms || []), termKey(from.name)])];
   const patch = { terms };
   if (!into.note && from.note) patch.note = from.note;
+  if (from.edited) patch.edited = true;
+  if (into.untranslated && !from.untranslated) patch.untranslated = undefined;
   await store.save('ingredients', into.id, patch);
   await store.save('ingredients', from.id, { deleted: true, terms: [] });
 }
+
+// ---------- corrections ----------
+
+// Rename the ingredient behind a term, everywhere. Joins it with an existing
+// ingredient of that name. Returns the record that remains.
+export async function renameTerm(term, newName, idx = termIndex()) {
+  const name = newName.trim();
+  if (!name) return null;
+  const rec = idx.get(term.key);
+  const twin = store.list('ingredients').find((i) => !i.rule && i.id !== rec?.id && termKey(i.name) === termKey(name));
+  if (rec && !rec.rule) {
+    await store.save('ingredients', rec.id, { name, untranslated: undefined, edited: true, terms: [...new Set([...(rec.terms || []), term.key])] });
+    if (twin) { await mergeIngredient(rec.id, twin.id); return store.get('ingredients', twin.id); }
+    return store.get('ingredients', rec.id);
+  }
+  if (twin) { await store.save('ingredients', twin.id, { terms: [...new Set([...(twin.terms || []), term.key])], edited: true }); return store.get('ingredients', twin.id); }
+  return store.save('ingredients', store.newId(), { name, terms: [term.key], edited: true });
+}
+
+// "amandel kokosnoot" is really "amandel" + "kokosnoot", on every menu.
+export async function splitTerm(term, parts, idx = termIndex()) {
+  parts = parts.map((p) => p.trim()).filter(Boolean);
+  if (parts.length < 2) return;
+  const rec = idx.get(term.key);
+  if (rec?.rule) await store.save('ingredients', rec.id, { splitInto: parts });
+  else {
+    if (rec) {
+      const terms = (rec.terms || []).filter((k) => k !== term.key);
+      if (!terms.length) await store.save('ingredients', rec.id, { deleted: true, terms: [] });
+      else await store.save('ingredients', rec.id, { terms });
+    }
+    await store.save('ingredients', store.newId(), { name: term.text.toLowerCase(), terms: [term.key], splitInto: parts, rule: true, notIngredient: true, edited: true });
+  }
+  await catalogueIngredients();
+}
+
+// Undo a split everywhere.
+export async function unsplit(ruleId) {
+  await store.save('ingredients', ruleId, { deleted: true, terms: [] });
+  await catalogueIngredients();
+}
+
+// Hide (or show again) the ingredient behind a term, everywhere.
+export async function setHidden(term, hidden, idx = termIndex()) {
+  let rec = idx.get(term.key);
+  if (!rec) rec = await store.save('ingredients', store.newId(), { name: nameFor(term.text), terms: [term.key] });
+  await store.save('ingredients', rec.id, { notIngredient: hidden || undefined, edited: true });
+}
+
+// Where to cut a run of words that is really several ingredients: everywhere,
+// except after a describing word ("opgelegde citroen"), inside a known phrase
+// ("foie gras"), and around linking words ("tomaatjes uit eigen tuin").
+const DESCRIBING = /^(opgelegde?|ingelegde?|belgische?|franse?|italiaanse?|hollandse?|schotse?|ierse?|bretoense?|red|green|white|black|yellow|purple|smoked|grilled|roasted|fresh|wild|sweet|raw|crispy|pickled|marinated|cured|aged|young|baby|mini|sea|lijngevangen|line-caught)$/;
+const LINKS = /^(uit|van|met|de|du|des|la|le|di|del|della|au|aux|a|of|from|with|in|op|en|and|et|eigen|own|x)$/;
+export function suggestCuts(text) {
+  const words = String(text).split(/\s+/).filter(Boolean);
+  const k = words.map((w) => termKey(w));
+  return words.map((w, i) => {
+    if (i === 0) return false;
+    if (ADJ[k[i - 1]] || DESCRIBING.test(k[i - 1]) || /-$/.test(words[i - 1])) return false;
+    if (LINKS.test(k[i - 1]) || LINKS.test(k[i])) return false;
+    if (DICT[`${k[i - 1]} ${k[i]}`] || (i > 1 && DICT[`${k[i - 2]} ${k[i - 1]} ${k[i]}`])) return false;
+    if (/^[A-ZÀ-Ý][a-zà-ÿ]/.test(w) && /^[A-ZÀ-Ý][a-zà-ÿ]/.test(words[i - 1])) return false; // Irish Mór
+    return true;
+  });
+}
+
+export const splitRules = () => store.list('ingredients').filter((i) => i.rule);
